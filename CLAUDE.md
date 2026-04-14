@@ -268,6 +268,7 @@ Never approximate the crotch curve with a simple arc. Always use bezier.
 - `GARMENTOS-RESEARCH.md` — Master consolidated research document — read this first
 - `GARMENTOS-MANNEQUIN-RESEARCH.md` — Complete dress form measurements (25 points), ISO 8559, MakeHuman/Anny/bodyapps-viz, Stage 2 build architecture, minimum viable mannequin set
 - `GARMENTOS-BASIC-BLOCKS-RESEARCH.md` — Complete trouser and shirt block formulas, construction sequences, mathematical relationships, video resources
+- `GARMENTOS-HUMAN-ANATOMY-RESEARCH.md` — Body proportions, Vitruvian Man, East African body data, academic research findings, body shape classification, crotch geometry
 - `GARMENTOS-FABRIC-SCIENCE-AND-3D-RESEARCH.md` — Kawabata fabric properties, Three.js plan, Blender integration, Style3D papers, 3D build sequence
 
 ---

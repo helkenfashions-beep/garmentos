@@ -189,7 +189,7 @@ Input: measurement values from user
 Output: interactive 3D body avatar that scales correctly
 Technology: Three.js, browser-based
 Complexity: moderate — Three.js has good documentation and examples
-East African calibration: Dr. Kinuthia's data feeds the mannequin proportions
+East African calibration: future anthropometric data feeds the mannequin proportions
 
 ### Stage 3 — Geometric pattern draping (Three.js)
 Input: completed 2D pattern pieces
@@ -209,7 +209,7 @@ Complexity: hard — but all components are free and documented
 Input: physical fabric samples from Nairobi market
 Output: GarmentOS fabric library with locally measured properties
 Method: partner with a textile testing lab or university with KES equipment
-Kenyatta University or University of Nairobi textile departments likely have access to fabric testing equipment
+Local university textile departments likely have access to fabric testing equipment
 
 ---
 
@@ -218,7 +218,7 @@ Kenyatta University or University of Nairobi textile departments likely have acc
 | Feature | Clo3D | GarmentOS target |
 |---|---|---|
 | 3D mannequin | Yes, static sizing | Yes, scaled from actual measurements |
-| Body standard | European/Asian | East African (Dr. Kinuthia data) |
+| Body standard | European/Asian | East African (anthropometric data) |
 | Interactive rotation | Yes | Yes (Three.js) |
 | Real time pattern update | Yes | Yes (Stage 3) |
 | Fabric physics | Yes, proprietary | Yes, open source (Stage 8) |

@@ -10,7 +10,7 @@ The GarmentOS mannequin strategy:
 - Start from European standard measurements as the geometric base — well documented, immediately available
 - Expose every key proportion as a user-adjustable input
 - Mannequin scales in real time as measurements are entered
-- When Dr. Kinuthia's data or fit correction data accumulates, update the default starting proportions to East African — architecture already supports it
+- When East African anthropometric data or fit correction data accumulates, update the default starting proportions to East African — architecture already supports it
 - Every real Nairobi body entered is implicitly East African calibration data
 
 This means the designer gets his interactive mannequin immediately without waiting for a dataset that doesn't exist yet.
@@ -29,7 +29,7 @@ ISO 8559 is the global standard for body measurement definitions used in clothin
 
 **ISO 8559-2** — Primary and secondary dimension indicators for garment types
 
-GarmentOS should align its measurement definitions with ISO 8559-1. This ensures interoperability with other tools, academic research, and Dr. Kinuthia's future data which will also be ISO-aligned.
+GarmentOS should align its measurement definitions with ISO 8559-1. This ensures interoperability with other tools, academic research, and future East African anthropometric data which will also be ISO-aligned.
 
 ---
 
@@ -134,7 +134,7 @@ Based on Bergmann's Rule and existing East African anthropometric research, expe
 - Waist and hip: potentially leaner proportions
 - Limb lengths: potentially longer relative to torso
 - Seat prominence: differs from European norm
-- Dr. Kinuthia's data will confirm exact values
+- Future East African anthropometric data will confirm exact values
 
 ---
 
@@ -267,7 +267,7 @@ Source from University of Fashion's "How to Measure the Male Body" content (93 m
 
 ## 10. EAST AFRICAN CALIBRATION PATH (when data becomes available)
 
-When Dr. Kinuthia's research data surfaces or when GarmentOS accumulates fit correction data from Nairobi production:
+When East African anthropometric data surfaces or when GarmentOS accumulates fit correction data from Nairobi production:
 
 1. Measure the deviation between Aldrich European defaults and real East African bodies at each measurement point
 2. Store these as East African correction factors

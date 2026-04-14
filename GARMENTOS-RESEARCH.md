@@ -96,7 +96,7 @@ From waist: hip (consistent within body shape types), thigh (waist-to-thigh rati
 
 ## 1.5 THE EAST AFRICAN / KENYAN BODY — CRITICAL FINDINGS
 
-**The sizing gap (confirmed by Kenyatta University research):**
+**The sizing gap (confirmed by East African academic research):**
 Kenya Bureau of Standards body size charts are based on data adapted from non-Kenyan foreign samples. Every garment sized to Kenyan standards is built on the wrong body. This is the fundamental problem GarmentOS solves.
 
 **What is known about African body proportions vs European standards:**
@@ -189,14 +189,14 @@ Benson's father's hand-drawn crotch curve, calibrated over decades of fitting Ke
 
 ---
 
-## 1.9 DR. ROSE OTIENO — KEY RESEARCH FINDINGS
+## 1.9 EAST AFRICAN ACADEMIC RESEARCH — KEY FINDINGS
 
-Dr. Rose Bujehela Otieno (1960s–October 30, 2025) — Senior Lecturer, Fashion Design and Marketing, Kenyatta University. PhD in Anthropometrics, Manchester Metropolitan University. She passed away October 30, 2025 after a prolonged illness. GarmentOS is built to honour and complete her work.
+Published East African academic research on body sizing establishes the following:
 
-**Kenyan children's sizing study (PhD thesis + two papers, 1999–2000)**
-Anthropometric survey of 618 female Kenyan children aged 2–6 in Nairobi. Analysed 33 body parameters. Key finding: **height, outside leg, chest, and hip** are the four anchor dimensions for a Kenyan sizing system. These are the independent variables from which other dimensions derive for Kenyan bodies specifically.
+**Kenyan children's sizing study (anthropometric survey, Nairobi)**
+Survey of 618 female Kenyan children aged 2–6. Analysed 33 body parameters. Key finding: **height, outside leg, chest, and hip** are the four anchor dimensions for a Kenyan sizing system. These are the independent variables from which other dimensions derive for Kenyan bodies specifically.
 
-**Three-issue framework (2008, EuroMed Journal of Business)**
+**Three-issue framework for clothing anthropometrics**
 Three problems clothing anthropometrics must solve:
 1. Adequate measurement of the body
 2. Analysis of significant data for size charts
@@ -204,14 +204,14 @@ Three problems clothing anthropometrics must solve:
 
 This is exactly the three-step problem GarmentOS solves.
 
-**3D Body Measurement Technology: Implications for Africa (2013, AJEST)**
+**3D Body Measurement Technology: Implications for Africa**
 - Kenyan sizing charts confirmed as adapted from foreign samples
 - Anthropometric data for African populations absent from global literature
-- Explicitly recommended industry-academic collaboration to fill this gap
-- Identified 3D scanning as the frontier technology
+- Industry-academic collaboration recommended to fill this gap
+- 3D scanning identified as the frontier technology
 
-**Active collaboration:**
-Dr. Lydia Nkatha Kinuthia — Department of Textile Technology, School of Engineering, Kirinyaga University. Contact: nkinuthia@kyu.ac.ke. She has responded positively and is open to collaboration. She co-supervised the 2024 Kenyan maternity wear sizing study with Dr. Otieno. She is the active academic contact for GarmentOS anthropometric data.
+**Future East African anthropometric data collaboration:**
+GarmentOS is building toward an active academic collaboration with East African textile research institutions to obtain Kenyan body measurement data. The architecture supports East African calibration from day one — the collaboration will populate it.
 
 ---
 
@@ -398,7 +398,7 @@ Benson's brother is the primary designer. He uses Clo3D. His requirement for ado
 ## 3.2 THE THREE-LAYER 3D ARCHITECTURE
 
 **Layer 1 — Interactive Parametric Mannequin (Stage 2)**
-3D body avatar scaled from measurement inputs. Rotate, zoom, any angle. Three.js, browser-based. Pure geometry, no physics. East African proportions from Dr. Kinuthia's data.
+3D body avatar scaled from measurement inputs. Rotate, zoom, any angle. Three.js, browser-based. Pure geometry, no physics. East African proportions from future anthropometric data.
 
 **Layer 2 — Geometric Pattern Draping (Stage 3)**
 Pattern pieces wrapped mathematically on mannequin surface. Real time update when pattern is edited. Still Three.js. No physics engine yet — pure geometry. Designer sees garment assembled and can rotate and inspect.
@@ -552,7 +552,7 @@ Denim: high bending rigidity, low shear — stiff, holds shape. Stone washing si
 Fabric Assurance by Simple Testing (FAST), developed CSIRO Australia 1980s. Fewer measurements, focused on tailorability. Measures: extensibility, bending rigidity, shear rigidity, formability, relaxation shrinkage, hygral expansion. Good fit for GarmentOS practical use case.
 
 **East African fabric gap:**
-KES data for kitenge, African print cotton, cotton drill, polyester lace is sparse in published literature. This is a gap GarmentOS fills over time by measuring local Nairobi market fabrics — the first East African fabric properties database. Partner with Kenyatta University or University of Nairobi textile labs for equipment access.
+KES data for kitenge, African print cotton, cotton drill, polyester lace is sparse in published literature. This is a gap GarmentOS fills over time by measuring local Nairobi market fabrics — the first East African fabric properties database. Partner with local university textile labs for equipment access.
 
 ---
 
@@ -580,7 +580,7 @@ KES data for kitenge, African print cotton, cotton drill, polyester lace is spar
 | Feature | Clo3D | GarmentOS target |
 |---|---|---|
 | 3D mannequin | Yes, static sizing | Yes, scaled from actual measurements |
-| Body standard | European/Asian | East African (Dr. Kinuthia data) |
+| Body standard | European/Asian | East African (anthropometric data) |
 | Interactive rotation | Yes | Yes — Three.js (Stage 2) |
 | Real time pattern update | Yes | Yes — Three.js (Stage 3) |
 | Fabric physics | Yes, proprietary | Yes, open source (Stage 8) |
@@ -608,7 +608,7 @@ Start from European standard measurements as the geometric base. Expose every ke
 
 ## 4.2 ISO 8559 — THE MEASUREMENT STANDARD
 
-ISO 8559-1:2017 is the international standard defining where and how every body measurement is taken for clothing. GarmentOS must align with this standard so measurement definitions match what Dr. Kinuthia's research uses, what Clo3D uses, and what any future data source uses.
+ISO 8559-1:2017 is the international standard defining where and how every body measurement is taken for clothing. GarmentOS must align with this standard so measurement definitions match what Clo3D uses, what East African academic research uses, and what any future data source uses.
 
 ---
 
@@ -771,7 +771,7 @@ Start with 2a. Upgrade to 2b when 2a is proven.
 
 ## 4.8 EAST AFRICAN CALIBRATION PATH
 
-When data from Dr. Kinuthia or from GarmentOS production fit corrections accumulates:
+When East African anthropometric data or GarmentOS production fit corrections accumulate:
 1. Measure deviation between European defaults and real East African bodies per measurement point
 2. Store as East African correction factors
 3. Add a toggle: "East African defaults / European defaults"
@@ -792,7 +792,7 @@ Build a simple fit correction logging feature from Stage 3 onwards — every "le
 - Jacket/blazer block — structured tailoring
 - Sleeve block standalone variations
 
-## 4.2 EAST AFRICAN BODY DATA (ongoing — Dr. Kinuthia collaboration)
+## 4.2 EAST AFRICAN BODY DATA (ongoing — academic collaboration)
 - Adult male Kenyan body measurement dataset
 - Adult female Kenyan body measurement dataset
 - East African crotch curve calibration from Benson's father's drawings
@@ -803,7 +803,7 @@ Build a simple fit correction logging feature from Stage 3 onwards — every "le
 - KES measurement of cotton drill (common workwear fabric)
 - KES measurement of African print cotton
 - KES measurement of polyester lace
-- Partner: Kenyatta University or University of Nairobi textile testing labs
+- Partner: local university textile testing labs
 
 ## 4.4 GRADING RESEARCH (before Stage 6)
 - East African size increment standards — do not default to European S/M/L
@@ -813,5 +813,5 @@ Build a simple fit correction logging feature from Stage 3 onwards — every "le
 ---
 
 *Document status: v1.0 consolidated — April 2026*
-*This document covers: human anatomy, body proportions, Vitruvian Man, East African body research, Dr. Otieno findings, Dr. Kinuthia collaboration, trouser block formulas, shirt block formulas, canvas implementation logic, video resources, 3D engine options, fabric science (KES/FAST), Style3D research, free data sources, competitive landscape*
+*This document covers: human anatomy, body proportions, Vitruvian Man, East African body research, academic findings on Kenyan sizing, trouser block formulas, shirt block formulas, canvas implementation logic, video resources, 3D engine options, fabric science (KES/FAST), Style3D research, free data sources, competitive landscape*
 *All formulas in this document are implementation-ready for Claude Code*

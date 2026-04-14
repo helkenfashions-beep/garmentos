@@ -107,7 +107,7 @@ Key finding: only 9.15% of people are consistent across bust, waist, and hip mea
 This is the most important section for GarmentOS as a product built for the Kenyan market.
 
 ### The sizing gap
-Research from Kenyatta University confirms that Kenya Bureau of Standards body size charts are based on data adapted from non-Kenyan samples. This means every garment sized to Kenyan standards is built on the wrong body. This is the fundamental problem GarmentOS can solve.
+East African academic research confirms that Kenya Bureau of Standards body size charts are based on data adapted from non-Kenyan samples. This means every garment sized to Kenyan standards is built on the wrong body. This is the fundamental problem GarmentOS can solve.
 
 ### What is known about African body proportions vs European/Western standards:
 - African body morphotypes show significant differences from European sizing assumptions
@@ -248,43 +248,39 @@ Every block generated should store the fit corrections made after the first toil
 
 ---
 
-## 10. DR. ROSE OTIENO — ACTUAL RESEARCH FINDINGS
+## 10. EAST AFRICAN ACADEMIC RESEARCH — KEY FINDINGS
 
-Dr. Rose Bujehela Otieno, PhD — Senior Lecturer, Fashion Design and Marketing, Kenyatta University. Contact: otieno.rose@ku.ac.ke. This is the most relevant local academic for GarmentOS.
+Published East African academic research on clothing anthropometrics establishes the following directly relevant findings:
 
-### Her key published findings directly relevant to GarmentOS:
-
-**Kenyan children's sizing study (PhD thesis + two published papers, 1999–2000)**
-Conducted an anthropometric survey on 618 female Kenyan children aged 2–6 years in Nairobi Province. Analysed correlation coefficients of 33 body parameters. Key finding: height, outside leg, chest, and hip emerged as the four key dimensions for a Kenyan sizing system — a centilong system built on these four anchors. This established that for Kenyan bodies, these four measurements are the independent variables from which other dimensions can be derived or categorised.
+**Kenyan children's sizing study (anthropometric survey, Nairobi)**
+Anthropometric survey of 618 female Kenyan children aged 2–6 years in Nairobi Province. Analysed correlation coefficients of 33 body parameters. Key finding: height, outside leg, chest, and hip emerged as the four key dimensions for a Kenyan sizing system — a centilong system built on these four anchors. This established that for Kenyan bodies, these four measurements are the independent variables from which other dimensions can be derived or categorised.
 
 Direct GarmentOS application: the same four anchor dimensions likely apply to adult Kenyan sizing. Height, outside leg (or inseam), chest, and hip as the minimum input set is validated by Kenyan data specifically.
 
-**Three-issue framework for clothing anthropometrics (2008, EuroMed Journal of Business)**
-Dr. Otieno defined the three problems clothing anthropometrics must solve:
+**Three-issue framework for clothing anthropometrics**
+East African research defined the three problems clothing anthropometrics must solve:
 1. An adequate way of measuring the body
 2. Analysis of significant data for size charts
 3. Use of size charts to assure consumer satisfaction
 
 This is the exact three-step problem GarmentOS solves — measurement input, block generation, fit output.
 
-**3D Body Measurement Technology: Implications for Africa (2013, AJEST)**
+**3D Body Measurement Technology: Implications for Africa**
 Key findings:
 - Comprehensive anthropometric data for African populations including Kenyan is absent from global literature
-- Kenya Bureau of Standards sizing charts are adapted from non-Kenyan (foreign) samples — confirmed in her own words
+- Kenya Bureau of Standards sizing charts are adapted from non-Kenyan (foreign) samples — confirmed by East African academic research
 - Poor resources, knowledge gaps, and technology cost are the reasons for this gap
-- She explicitly recommends collaboration between government, educational institutions, and industry to generate this data
-- She identifies 3D scanning as the frontier technology for solving the African body measurement problem
+- Collaboration between government, educational institutions, and industry is recommended to generate this data
+- 3D scanning identified as the frontier technology for solving the African body measurement problem
 
-**Unique Kenyan female body shapes (referenced in Mason et al. 2008)**
-Research cited in subsequent East African studies identified two unique body shapes for Kenyan women that differ from established Western body shape categories. This means the standard triangle/hourglass/rectangle classification system does not fully capture Kenyan body morphology.
+**Unique Kenyan female body shapes**
+Research identified two unique body shapes for Kenyan women that differ from established Western body shape categories. The standard triangle/hourglass/rectangle classification system does not fully capture Kenyan body morphology.
 
-**Body shape and the male clothing consumer (Apeagyei & Otieno)**
-Co-authored research specifically on male body shape and clothing — directly relevant to GarmentOS menswear blocks.
+**Body shape and the male clothing consumer**
+Published research specifically on male body shape and clothing — directly relevant to GarmentOS menswear blocks.
 
 ### What this means practically:
-Dr. Otieno has spent 25+ years building the academic case that Kenyan bodies need their own measurement system and nobody has built the production tool to act on her research. GarmentOS is that tool. A direct outreach to her is not just a courtesy — it is a strategic move that could give GarmentOS access to 25 years of unpublished measurement data and academic credibility simultaneously.
-
-**Kirinyaga University** — Dr. Lydia Kinuthia, head of Fashion Design and Textile Technology. Co-supervisor on the 2024 Kenyan maternity wear sizing study. Second local contact worth pursuing.
+East African academic research has spent decades building the case that Kenyan bodies need their own measurement system. No production tool has yet acted on this research. GarmentOS is that tool — built by someone running an actual Nairobi factory with direct access to real Kenyan bodies daily. The academic case is already made. GarmentOS closes the gap between the research and the production floor.
 
 ---
 

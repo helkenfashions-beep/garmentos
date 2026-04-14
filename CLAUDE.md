@@ -46,19 +46,17 @@ With complex patterns, Clo3D's sync becomes slow — users report waiting for au
 - Panel modes: full-screen 2D for detailed drafting, full-screen 3D for design review
 
 **The East African body is what Clo3D cannot match:**
-Clo3D's mannequin is built on European/Asian bodies. GarmentOS's mannequin is built on Dr. Kinuthia's data and Benson's father's fit corrections. Same split view experience. Better body underneath it.
+Clo3D's mannequin is built on European/Asian bodies. GarmentOS's mannequin is built on East African anthropometric data and Benson's father's fit corrections. Same split view experience. Better body underneath it.
 
 This is the most important thing to understand about GarmentOS.
 
 All existing pattern software — Clo3D, Optitex, Gerber — is built on European or Asian body data. Kenya Bureau of Standards sizing charts are themselves adapted from non-Kenyan foreign samples. This means every pattern tool on the market is systematically wrong for East African bodies.
 
-GarmentOS is being built in active collaboration with Dr. Lydia Nkatha Kinuthia, Department of Textile Technology, School of Engineering, Kirinyaga University (nkinuthia@kyu.ac.ke). She co-supervised the 2024 study on Kenyan body sizing and continues the anthropometric research of the late Dr. Rose Bujehela Otieno of Kenyatta University, who spent 25 years making the academic case for a Kenyan body standard.
-
-Dr. Otieno's key findings that GarmentOS is built around:
+East African academic research on body sizing confirms:
 - Kenyan sizing charts are based on foreign data — confirmed
 - The four anchor dimensions for Kenyan sizing are: height, outside leg, chest, hip
 - Comprehensive anthropometric data for the Kenyan population is absent from global literature
-- She explicitly called for collaboration between academic institutions and industry to fill this gap
+- Collaboration between academic institutions and industry is needed to fill this gap
 
 GarmentOS is that collaboration. Every block generated must eventually be calibrated against East African body data, not just Winifred Aldrich formulas. The Aldrich system is the starting point. East African calibration is the destination.
 
@@ -270,7 +268,6 @@ Never approximate the crotch curve with a simple arc. Always use bezier.
 - `GARMENTOS-RESEARCH.md` — Master consolidated research document — read this first
 - `GARMENTOS-MANNEQUIN-RESEARCH.md` — Complete dress form measurements (25 points), ISO 8559, MakeHuman/Anny/bodyapps-viz, Stage 2 build architecture, minimum viable mannequin set
 - `GARMENTOS-BASIC-BLOCKS-RESEARCH.md` — Complete trouser and shirt block formulas, construction sequences, mathematical relationships, video resources
-- `GARMENTOS-HUMAN-ANATOMY-RESEARCH.md` — Body proportions, Vitruvian Man, East African body data, Dr. Otieno findings, Dr. Kinuthia collaboration context
 - `GARMENTOS-FABRIC-SCIENCE-AND-3D-RESEARCH.md` — Kawabata fabric properties, Three.js plan, Blender integration, Style3D papers, 3D build sequence
 
 ---
@@ -282,10 +279,6 @@ Never approximate the crotch curve with a simple arc. Always use bezier.
 **Benson's brother** — lead designer. Current Clo3D user. Will only adopt GarmentOS if it has an interactive 3D mannequin he can rotate and tweak in real time. This feature is his specific requirement and must not be compromised.
 
 **Benson's father** — master tailor. Decades of fitting Kenyan bodies. His core knowledge: the crotch bezier curve is the secret to a well-fitting trouser. His hand-drawn curve is the East African ground truth we are encoding mathematically.
-
-**Dr. Lydia Nkatha Kinuthia** — Kirinyaga University, Textile Technology. Active research collaboration in progress. She has Kenyan anthropometric data that will calibrate the East African body standard in GarmentOS. Contact: nkinuthia@kyu.ac.ke
-
-**Dr. Rose Bujehela Otieno (late)** — Kenyatta University. Spent 25 years building the academic case for a Kenyan body standard. Passed away October 30, 2025. GarmentOS is built to honour and complete her work.
 
 ---
 

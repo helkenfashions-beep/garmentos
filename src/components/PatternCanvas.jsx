@@ -309,6 +309,23 @@ export default function PatternCanvas({
     const snap = findSnap(pt, state.points, snapRadiusMm());
     const finalPt = snap.snapped ? snap.point : pt;
 
+    // ── Control handle drag — works in any tool when not mid-draw ────────────
+    // Check before anything else so handles are always grabbable
+    if (pendingStart === null) {
+      for (const [segId, seg] of Object.entries(state.segments)) {
+        if (seg.type !== 'bezier') continue;
+        // Only show handles for selected beziers (must have at least one endpoint selected)
+        const selIds = state.selected;
+        if (!selIds.has(seg.p1) && !selIds.has(seg.p2)) continue;
+        for (const handle of ['c1', 'c2']) {
+          if (seg[handle] && dist(pt, seg[handle]) <= hitRadiusMm() * 2) {
+            dragState.current = { type: 'control', segId, handle };
+            return;
+          }
+        }
+      }
+    }
+
     // ── Select tool ─────────────────────────────────────────────────────────
     if (activeTool === TOOLS.SELECT) {
       // Check if we clicked a point
@@ -320,19 +337,6 @@ export default function PatternCanvas({
           startCanvas: finalPt,
         };
         return;
-      }
-
-      // Check if we clicked a control handle
-      for (const [segId, seg] of Object.entries(state.segments)) {
-        if (seg.type !== 'bezier') continue;
-        const selIds = [...state.selected];
-        if (!selIds.includes(seg.p1) && !selIds.includes(seg.p2)) continue;
-        for (const handle of ['c1', 'c2']) {
-          if (seg[handle] && dist(pt, seg[handle]) <= hitRadiusMm()) {
-            dragState.current = { type: 'control', segId, handle };
-            return;
-          }
-        }
       }
 
       // Check if we clicked a segment
@@ -401,6 +405,8 @@ export default function PatternCanvas({
       } else {
         const { c1, c2 } = defaultControlPoints(startPt, endPt);
         dispatch({ type: 'ADD_SEGMENT', segment: { id: segId, type: 'bezier', p1: pendingStart, p2: endId, c1, c2 } });
+        // Auto-select both endpoints so handles appear immediately
+        dispatch({ type: 'SET_SELECTED', ids: [pendingStart, endId] });
       }
 
       // Chain: new start is the end point of this segment
@@ -544,18 +550,38 @@ export default function PatternCanvas({
     const startPt = state.points[pendingStart];
     if (!startPt) return null;
 
-    const endPt = snapTarget?.point ?? cursor;
-    const sw    = 1 / viewport.scale;
+    const endPt   = snapTarget?.point ?? cursor;
+    const sw      = 1 / viewport.scale;
+    const len     = lineLength(startPt, endPt);
+    const midX    = (startPt.x + endPt.x) / 2;
+    const midY    = (startPt.y + endPt.y) / 2;
+
+    // Offset the label slightly above the midpoint so it doesn't sit on the line
+    const dx = endPt.x - startPt.x;
+    const dy = endPt.y - startPt.y;
+    const d  = Math.sqrt(dx * dx + dy * dy) || 1;
+    const offsetDist = 8 / viewport.scale;
+    const labelX = midX + (-dy / d) * offsetDist;
+    const labelY = midY + ( dx / d) * offsetDist;
 
     return (
-      <line
-        x1={startPt.x} y1={startPt.y}
-        x2={endPt.x}   y2={endPt.y}
-        stroke="var(--color-text-muted)"
-        strokeWidth={sw}
-        strokeDasharray={`${4 / viewport.scale} ${3 / viewport.scale}`}
-        style={{ pointerEvents: 'none' }}
-      />
+      <g style={{ pointerEvents: 'none' }}>
+        <line
+          x1={startPt.x} y1={startPt.y}
+          x2={endPt.x}   y2={endPt.y}
+          stroke="var(--color-text-muted)"
+          strokeWidth={sw}
+          strokeDasharray={`${4 / viewport.scale} ${3 / viewport.scale}`}
+        />
+        {len > 0.5 && (
+          <MeasurementLabel
+            x={labelX}
+            y={labelY}
+            label={formatMm(len)}
+            scale={viewport.scale}
+          />
+        )}
+      </g>
     );
   }
 

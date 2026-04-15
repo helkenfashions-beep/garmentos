@@ -165,7 +165,7 @@ function useHistoryReducer() {
 
 // ─── PatternCanvas ────────────────────────────────────────────────────────────
 
-export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHistoryChange, ref }) {
+export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHistoryChange, onPatternChange, ref }) {
   const svgRef = useRef(null);
   const { state, dispatch, undo, redo, canUndo, canRedo } = useHistoryReducer();
 
@@ -174,6 +174,16 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
   useEffect(() => {
     onHistoryChange?.({ canUndo, canRedo });
   }, [canUndo, canRedo, onHistoryChange]);
+
+  // Emit pattern state to parent (debounced 80ms so live drag doesn't flood 3D sync)
+  const onPatternChangeRef = useRef(onPatternChange);
+  useEffect(() => { onPatternChangeRef.current = onPatternChange; }, [onPatternChange]);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onPatternChangeRef.current?.({ points: state.points, segments: state.segments });
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [state]);
 
   const [viewport,   setViewport]   = useState({ x: -10, y: -10, scale: 2.0 });
   const [cursor,     setCursor]     = useState({ x: 0, y: 0 });

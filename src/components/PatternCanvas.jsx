@@ -115,6 +115,15 @@ function patternReducer(state, action) {
     case 'RESET':
       return { ...INITIAL_PATTERN, selected: new Set() };
 
+    case 'LOAD_BLOCK': {
+      // Replace canvas with generated block points and segments
+      return {
+        points:   action.points,
+        segments: action.segments,
+        selected: new Set(),
+      };
+    }
+
     default:
       return state;
   }
@@ -169,7 +178,11 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
   const svgRef = useRef(null);
   const { state, dispatch, undo, redo, canUndo, canRedo } = useHistoryReducer();
 
-  useImperativeHandle(ref, () => ({ undo, redo, canUndo, canRedo }), [undo, redo, canUndo, canRedo]);
+  useImperativeHandle(ref, () => ({
+    undo, redo, canUndo, canRedo,
+    loadBlock: (points, segments) => dispatch({ type: 'LOAD_BLOCK', points, segments }),
+    clearCanvas: () => dispatch({ type: 'RESET' }),
+  }), [undo, redo, canUndo, canRedo, dispatch]);
 
   useEffect(() => {
     onHistoryChange?.({ canUndo, canRedo });
@@ -643,7 +656,29 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
       const p2 = state.points[seg.p2];
       if (!p1 || !p2) return null;
       const selected = selIds.has(seg.p1) && selIds.has(seg.p2);
-      const color    = seg.type === 'bezier' ? 'var(--color-bezier)' : 'var(--color-line)';
+
+      // Construction lines: dashed blue-grey guide lines
+      if (seg.construction) {
+        const dash = `${6/viewport.scale} ${4/viewport.scale}`;
+        return (
+          <g key={seg.id}>
+            <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y}
+              stroke="#3a5068" strokeWidth={sw * 0.8}
+              strokeDasharray={dash} />
+            {seg.label && (
+              <text
+                x={p2.x + 6/viewport.scale} y={p2.y + 4/viewport.scale}
+                fontSize={9/viewport.scale}
+                fill="#3a7090"
+                fontFamily="var(--font-mono)"
+                style={{ pointerEvents: 'none', userSelect: 'none' }}
+              >{seg.label}</text>
+            )}
+          </g>
+        );
+      }
+
+      const color = seg.type === 'bezier' ? 'var(--color-bezier)' : 'var(--color-line)';
 
       if (seg.type === 'line') {
         return (

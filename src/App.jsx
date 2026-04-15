@@ -3,7 +3,9 @@ import Toolbar, { TOOLS } from './components/Toolbar';
 import PatternCanvas from './components/PatternCanvas';
 import MannequinViewer from './components/MannequinViewer';
 import MeasurementPanel from './components/MeasurementPanel';
+import BlockPanel from './components/BlockPanel';
 import { useMeasurements } from './hooks/useMeasurements';
+import { generateTrouserBlock } from './lib/blocks/trouserBlock';
 
 export default function App() {
   // ── Canvas state ──────────────────────────────────────────────────────────
@@ -62,6 +64,15 @@ export default function App() {
   const handleToggleGrid  = useCallback(() => setShowGrid(v => !v), []);
   const handleUndo        = useCallback(() => canvasRef.current?.undo?.(), []);
   const handleRedo        = useCallback(() => canvasRef.current?.redo?.(), []);
+
+  // ── Block generation ──────────────────────────────────────────────────────
+  const handleGenerate = useCallback((blockType, garmentType) => {
+    if (blockType === 'trouser') {
+      const { points, segments } = generateTrouserBlock(measurements, garmentType);
+      canvasRef.current?.loadBlock(points, segments);
+    }
+  }, [measurements]);
+  const handleClearCanvas = useCallback(() => canvasRef.current?.clearCanvas?.(), []);
 
   // ── Global keyboard shortcuts ─────────────────────────────────────────────
   useEffect(() => {
@@ -219,6 +230,14 @@ export default function App() {
             onRedo={handleRedo}
             canUndo={histState.canUndo}
             canRedo={histState.canRedo}
+          />
+        )}
+
+        {/* Block panel — only in 2D or split */}
+        {showCanvas && (
+          <BlockPanel
+            onGenerate={handleGenerate}
+            onClear={handleClearCanvas}
           />
         )}
 

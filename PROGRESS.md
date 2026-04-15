@@ -120,7 +120,41 @@ Commit: e1dfb1a
 Trouser block engine — full Winifred Aldrich formula set generating the trouser block directly into the 2D canvas. Construction lines (horizontal guides: waist, hip, rise, knee, ankle), crease line, front panel, back panel, bezier crotch curve, darts. East African calibration layer architecture. The generated block syncs to the 3D panel through the existing pattern sync bridge.
 
 ## Stage 3 — Trouser Block Engine
-Status: NOT STARTED
+Status: COMPLETE
+Date: April 15 2026
+
+### What was built:
+
+**New files:**
+- `src/lib/blocks/trouserBlock.js` — pure math engine: Winifred Aldrich formula set, generates front + back trouser panel as points/segments in mm. Crotch curves always bezier. Upper thigh used directly for crotch extension, never derived from hip. East African calibration architecture in place.
+- `src/components/BlockPanel.jsx` — UI panel: block type selector (Trouser Block), garment fit selector (Trouser/Slacks/Jeans), Generate and Clear buttons
+
+**Modified files:**
+- `src/components/PatternCanvas.jsx` — added `LOAD_BLOCK` reducer action; exposed `loadBlock()` and `clearCanvas()` on canvas ref via `useImperativeHandle`; construction lines render as dashed blue-grey with labels (Waist, Hip 1, Hip 2, Rise, Knee, Ankle)
+- `src/App.jsx` — wired `BlockPanel` between toolbar and canvas; `handleGenerate` calls `generateTrouserBlock(measurements, garmentType)` and pipes result to `canvasRef.current.loadBlock()`
+
+**Block construction sequence:**
+1. Crease line (vertical centre of leg, full length)
+2. Horizontal construction lines: Waist, Hip 1, Hip 2, Body Rise, Knee, Ankle — rendered dashed
+3. Front panel: waist line, side seam, hem, inseam, fly bezier curve (crotch to CF waist), dart (10cm × 2cm)
+4. Back panel: waist line, side seam, hem, inseam, seat bezier curve (fork to CB waist, deep for buttocks), two darts (12cm and 10cm)
+5. All widths live-calculated from measurement inputs — block regenerates on demand
+
+**Architecture decisions:**
+- Construction lines stored with `construction: true` flag — excluded from 3D sync overlay, rendered separately
+- `LOAD_BLOCK` clears canvas and replaces with block — single undo step
+- Block lands immediately on canvas as fully editable points and segments
+- Crotch curve: both fly (front) and seat (back) use bezier — never arcs
+- Upper thigh `m.upperThighGirth` drives crotch fork calculation directly
+
+### Known limitations at this stage:
+- Side seam is straight lines between construction points — should be a smooth curve in Stage 5 (pattern tools)
+- No ease labels or construction annotations overlaid on canvas yet
+- East African calibration coefficients are architecture-ready but not yet populated with data
+- Waist-to-knee and waist-to-ankle fall back to height proportions if not measured directly
+
+### What Stage 4 will build on top of this:
+Shirt block engine — full Aldrich formula set: back panel, front panel, armscye bezier, button placket, sleeve block. Arm posing controls added to the 3D mannequin for sleeve fit checking.
 
 ## Stage 4 — Shirt Block Engine
 Status: NOT STARTED

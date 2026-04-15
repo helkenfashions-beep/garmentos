@@ -71,13 +71,30 @@ function patternReducer(state, action) {
     }
 
     case 'SCALE_BEZIER': {
-      // Atomically update p2 position + control points for a bezier length change
       const { segId, p2Id, newP2, newC1, newC2 } = action;
       return {
         ...state,
         points:   { ...state.points,   [p2Id]:  { ...state.points[p2Id],   x: newP2.x, y: newP2.y } },
         segments: { ...state.segments, [segId]: { ...state.segments[segId], c1: newC1,  c2: newC2  } },
       };
+    }
+
+    case 'MOVE_MULTI': {
+      // Non-history: live drag of multiple selected points + their bezier handles
+      const pts  = { ...state.points };
+      const segs = { ...state.segments };
+      for (const [id, pos] of Object.entries(action.positions))        pts[id]  = { ...pts[id],  x: pos.x, y: pos.y };
+      for (const [id, cp]  of Object.entries(action.controlPositions)) segs[id] = { ...segs[id], c1: cp.c1, c2: cp.c2 };
+      return { ...state, points: pts, segments: segs };
+    }
+
+    case 'COMMIT_MULTI': {
+      // History-tracked: commit multi-point drag to undo stack
+      const pts  = { ...state.points };
+      const segs = { ...state.segments };
+      for (const [id, pos] of Object.entries(action.positions))        pts[id]  = { ...pts[id],  x: pos.x, y: pos.y };
+      for (const [id, cp]  of Object.entries(action.controlPositions)) segs[id] = { ...segs[id], c1: cp.c1, c2: cp.c2 };
+      return { ...state, points: pts, segments: segs };
     }
 
     case 'SET_SELECTED': {
@@ -113,7 +130,7 @@ function useHistoryReducer() {
   });
 
   const dispatch = useCallback((action) => {
-    const NON_HISTORY = new Set(['MOVE_POINT', 'MOVE_CONTROL', 'SET_SELECTED']);
+    const NON_HISTORY = new Set(['MOVE_POINT', 'MOVE_CONTROL', 'SET_SELECTED', 'MOVE_MULTI']);
     if (NON_HISTORY.has(action.type)) {
       setHistory(h => ({ ...h, present: patternReducer(h.present, action) }));
       return;
@@ -329,6 +346,23 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
       dispatch({ type: 'MOVE_CONTROL', segId: ds.segId, handle: ds.handle, x: pt.x, y: pt.y });
       return;
     }
+    if (ds.type === 'multi') {
+      const dx = pt.x - ds.startCanvas.x;
+      const dy = pt.y - ds.startCanvas.y;
+      const positions = {};
+      for (const [id, start] of Object.entries(ds.startPositions)) {
+        positions[id] = { x: start.x + dx, y: start.y + dy };
+      }
+      const controlPositions = {};
+      for (const [segId, starts] of Object.entries(ds.startControlPositions)) {
+        controlPositions[segId] = {
+          c1: { x: starts.c1.x + dx, y: starts.c1.y + dy },
+          c2: { x: starts.c2.x + dx, y: starts.c2.y + dy },
+        };
+      }
+      dispatch({ type: 'MOVE_MULTI', positions, controlPositions });
+      return;
+    }
   }
 
   // ── Mouse down ────────────────────────────────────────────────────────────
@@ -337,11 +371,14 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
     const snap    = findSnap(pt, state.points, snapRadiusMm());
     const finalPt = snap.snapped ? snap.point : pt;
 
-    // ── Right-click drag → rectangle (works from any tool) ──────────────────
+    // ── Right-click drag ────────────────────────────────────────────────────
+    // SELECT tool → marquee box selection
+    // Any other tool → rectangle creation
     if (e.button === 2) {
       rightClickWasRect.current = false;
-      shapeDragRef.current = { tool: 'rect', start: pt };
-      setShapeDrag({ tool: 'rect', start: pt, end: pt });
+      const dragTool = activeTool === TOOLS.SELECT ? 'marquee' : 'rect';
+      shapeDragRef.current = { tool: dragTool, start: pt };
+      setShapeDrag({ tool: dragTool, start: pt, end: pt });
       return;
     }
 
@@ -385,6 +422,23 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
     // ── SELECT tool ──────────────────────────────────────────────────────────
     if (activeTool === TOOLS.SELECT) {
       if (snap.snapped) {
+        // If clicking a point already inside a multi-selection → drag everything together
+        if (state.selected.size > 1 && state.selected.has(snap.id)) {
+          const selIds = [...state.selected];
+          const startPositions = {};
+          for (const id of selIds) {
+            if (state.points[id]) startPositions[id] = { x: state.points[id].x, y: state.points[id].y };
+          }
+          // Snapshot bezier handles for segments with BOTH endpoints selected
+          const startControlPositions = {};
+          for (const [segId, seg] of Object.entries(state.segments)) {
+            if (seg.type === 'bezier' && state.selected.has(seg.p1) && state.selected.has(seg.p2)) {
+              startControlPositions[segId] = { c1: { ...seg.c1 }, c2: { ...seg.c2 } };
+            }
+          }
+          dragState.current = { type: 'multi', startCanvas: finalPt, startPositions, startControlPositions };
+          return;
+        }
         selectionSourceRef.current = 'point';
         dispatch({ type: 'SET_SELECTED', ids: [snap.id] });
         dragState.current = { type: 'point', pointId: snap.id, startCanvas: finalPt };
@@ -463,14 +517,24 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
       const screenDist = dist(start, end) * viewport.scale;
 
       if (e.button === 2) {
-        // Right-click rect
         if (screenDist >= RECT_DRAG_THRESHOLD) {
-          createRect(start, end);
+          if (tool === 'marquee') {
+            // Box select: find all points inside the rectangle
+            const minX = Math.min(start.x, end.x), maxX = Math.max(start.x, end.x);
+            const minY = Math.min(start.y, end.y), maxY = Math.max(start.y, end.y);
+            const inside = Object.values(state.points)
+              .filter(p => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY)
+              .map(p => p.id);
+            if (inside.length > 0) {
+              selectionSourceRef.current = 'marquee';
+              dispatch({ type: 'SET_SELECTED', ids: inside });
+            }
+          } else {
+            createRect(start, end);
+          }
           rightClickWasRect.current = true;
         }
-        // If no meaningful drag: contextmenu handler will run and cancel
       } else {
-        // Left-click shapes
         if (screenDist >= RECT_DRAG_THRESHOLD) {
           if (tool === 'rect')   createRect(start, end);
           if (tool === 'circle') createCircle(start, end);
@@ -481,12 +545,30 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
       return;
     }
 
-    // Commit point drag to history
+    // Commit point/multi drag to history
     const ds = dragState.current;
     dragState.current = null;
     if (ds?.type === 'point') {
       const pt = state.points[ds.pointId];
       if (pt) dispatch({ type: 'COMMIT_MOVE', id: ds.pointId, x: pt.x, y: pt.y });
+    }
+    if (ds?.type === 'multi') {
+      // Compute final positions and commit to history
+      const endPt = toCanvas(e.clientX, e.clientY);
+      const dx = endPt.x - ds.startCanvas.x;
+      const dy = endPt.y - ds.startCanvas.y;
+      const positions = {};
+      for (const [id, start] of Object.entries(ds.startPositions)) {
+        positions[id] = { x: start.x + dx, y: start.y + dy };
+      }
+      const controlPositions = {};
+      for (const [segId, starts] of Object.entries(ds.startControlPositions)) {
+        controlPositions[segId] = {
+          c1: { x: starts.c1.x + dx, y: starts.c1.y + dy },
+          c2: { x: starts.c2.x + dx, y: starts.c2.y + dy },
+        };
+      }
+      dispatch({ type: 'COMMIT_MULTI', positions, controlPositions });
     }
   }
 
@@ -595,7 +677,7 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
     );
   }
 
-  // ── Shape preview (rect / circle drag) ───────────────────────────────────
+  // ── Shape preview (rect / circle / marquee drag) ─────────────────────────
   function renderShapePreview() {
     if (!shapeDrag) return null;
     const { tool, start, end } = shapeDrag;
@@ -606,6 +688,22 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
       stroke: 'var(--color-accent)', strokeWidth: sw, strokeDasharray: dashArray,
       style: { pointerEvents: 'none' },
     };
+
+    // Marquee selection box — slightly different style to distinguish from rect creation
+    if (tool === 'marquee') {
+      const x = Math.min(start.x, end.x), y = Math.min(start.y, end.y);
+      const w = Math.abs(end.x - start.x),  h = Math.abs(end.y - start.y);
+      if (w < 0.5 || h < 0.5) return null;
+      return (
+        <rect x={x} y={y} width={w} height={h}
+          fill="var(--color-snap)" fillOpacity={0.05}
+          stroke="var(--color-snap)" strokeWidth={sw}
+          strokeDasharray={dashArray}
+          style={{ pointerEvents: 'none' }}
+        />
+      );
+    }
+
     if (tool === 'rect') {
       const x = Math.min(start.x, end.x), y = Math.min(start.y, end.y);
       const w = Math.abs(end.x - start.x),  h = Math.abs(end.y - start.y);

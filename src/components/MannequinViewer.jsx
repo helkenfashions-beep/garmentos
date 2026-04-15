@@ -1,42 +1,40 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { Male }   from '../lib/mannequin/bodies/Male.js';
-import { Female } from '../lib/mannequin/bodies/Female.js';
-import { Child }  from '../lib/mannequin/bodies/Child.js';
+import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
 
-// ─── Body type config ────────────────────────────────────────────────────────
-// mannequin.js uses height in metres (default Male 1.8, Female 1.7, Child 1.15)
+// ─── Config ──────────────────────────────────────────────────────────────────
 
-const BODY_TYPES = {
-  male_adult:   { label: 'Male',         Factory: Male,   defaultH: 1.8  },
-  female_adult: { label: 'Female',       Factory: Female, defaultH: 1.7  },
-  male_child:   { label: 'Boy',          Factory: Child,  defaultH: 1.15 },
-  female_child: { label: 'Girl',         Factory: Child,  defaultH: 1.10 },
+const MODEL_PATHS = {
+  male:   '/models/Soldier.glb',
+  female: '/models/Michelle.glb',
 };
 
-// mannequin.js internal units: ~1 unit ≈ 80mm at height=1.8
-// The mannequin stands so its feet touch y = GROUND_LEVEL (-0.7)
-// We keep all Three.js work in mannequin.js native units here
-// Pattern state arrives in mm — we scale for the overlay separately
+const BODY_TYPES = {
+  male_adult:   { gender: 'male',   defaultH: 1.80 },
+  female_adult: { gender: 'female', defaultH: 1.65 },
+  male_child:   { gender: 'male',   defaultH: 1.15 },
+  female_child: { gender: 'female', defaultH: 1.10 },
+};
 
-// ─── Dispose helper ──────────────────────────────────────────────────────────
+// Dress-form material — strips clothing textures, gives clean smooth mannequin look
+const MANNEQUIN_MAT = new THREE.MeshStandardMaterial({
+  color:     0xcdc0b4,   // warm light beige — classic tailor's dummy tone
+  roughness: 0.75,
+  metalness: 0.0,
+});
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 function disposeObject(obj) {
   if (!obj) return;
   obj.traverse(o => {
     if (o.geometry) o.geometry.dispose();
-    if (o.material) {
-      if (Array.isArray(o.material)) o.material.forEach(m => m.dispose());
-      else o.material.dispose();
-    }
+    // We use shared MANNEQUIN_MAT — don't dispose it
   });
 }
 
-// ─── Pattern overlay ─────────────────────────────────────────────────────────
-// Draws pattern segments as blue lines centred in front of the body.
-// Pattern mm → mannequin units: 1 mannequin unit ≈ 1800mm / 1.8 height = 1000mm/unit
-// so 1mm = 0.001 mannequin units
-function buildPatternLines(patternState) {
+function buildPatternLines(patternState, waistY) {
   const { points, segments } = patternState;
   const ptArr = Object.values(points);
   if (ptArr.length === 0) return null;
@@ -49,20 +47,16 @@ function buildPatternLines(patternState) {
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
 
-  const SCALE = 0.001;       // mm → mannequin units
-  const zPos  = 1.2;         // in front of body
-  const yBase = 1.2;         // approx waist height in mannequin units
+  const S = 0.001; // mm → metres
 
   function p3(px, py) {
-    return [(px - cx) * SCALE, yBase + (cy - py) * SCALE, zPos];
+    return [(px - cx) * S, waistY + (cy - py) * S, 0.28];
   }
 
   const verts = [];
   for (const seg of Object.values(segments)) {
-    const p1 = points[seg.p1];
-    const p2 = points[seg.p2];
+    const p1 = points[seg.p1], p2 = points[seg.p2];
     if (!p1 || !p2) continue;
-
     if (seg.type === 'line') {
       verts.push(...p3(p1.x, p1.y), ...p3(p2.x, p2.y));
     } else if (seg.type === 'bezier') {
@@ -87,6 +81,9 @@ function buildPatternLines(patternState) {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
+const loader = new GLTFLoader();
+const modelCache = {}; // cache loaded GLTF scenes by gender
+
 const PRESETS = ['front', 'back', 'left', 'right'];
 
 export default function MannequinViewer({ measurements, patternState, bodyType = 'male_adult' }) {
@@ -94,6 +91,9 @@ export default function MannequinViewer({ measurements, patternState, bodyType =
   const threeRef   = useRef(null);
   const bodyRef    = useRef(null);
   const patternRef = useRef(null);
+  const waistYRef  = useRef(1.0);
+
+  const [loading, setLoading] = useState(false);
 
   // ── Scene setup (once) ────────────────────────────────────────────────────
   useEffect(() => {
@@ -113,36 +113,39 @@ export default function MannequinViewer({ measurements, patternState, bodyType =
 
     const scene = new THREE.Scene();
 
-    // Lighting — matching mannequin.js's own setup for best visual
-    const ambient = new THREE.AmbientLight(0xffffff, 0.5);
-    scene.add(ambient);
-    const sun = new THREE.DirectionalLight(0xffffff, 2.75);
-    sun.decay = 0;
-    sun.position.set(0, 4, 2).setLength(15);
-    sun.castShadow = true;
-    scene.add(sun);
+    // Lighting for a clean dress-form appearance
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
 
-    // Ground shadow disc
-    const groundGeo = new THREE.CircleGeometry(3, 40);
-    const groundMat = new THREE.MeshLambertMaterial({ color: 0x161b22 });
-    const ground = new THREE.Mesh(groundGeo, groundMat);
+    const key = new THREE.DirectionalLight(0xfff5e8, 1.4);
+    key.position.set(1.5, 3, 2);
+    key.castShadow = true;
+    scene.add(key);
+
+    const fill = new THREE.DirectionalLight(0xddeeff, 0.4);
+    fill.position.set(-2, 1, -1);
+    scene.add(fill);
+
+    // Ground
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(3, 48),
+      new THREE.MeshLambertMaterial({ color: 0x0d1117 })
+    );
     ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.7; // GROUND_LEVEL
     ground.receiveShadow = true;
     scene.add(ground);
 
     // Camera
-    const camera = new THREE.PerspectiveCamera(30, W / H, 0.01, 200);
-    camera.position.set(0, 1.2, 5);
-    camera.lookAt(0, 1.2, 0);
+    const camera = new THREE.PerspectiveCamera(28, W / H, 0.01, 100);
+    camera.position.set(0, 1.0, 4.5);
+    camera.lookAt(0, 1.0, 0);
 
     // Controls
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, 1.2, 0);
+    controls.target.set(0, 1.0, 0);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.minDistance = 0.5;
-    controls.maxDistance = 20;
+    controls.minDistance = 0.3;
+    controls.maxDistance = 12;
     controls.update();
 
     let animId;
@@ -171,55 +174,101 @@ export default function MannequinViewer({ measurements, patternState, bodyType =
       ro.disconnect();
       controls.dispose();
       renderer.dispose();
+      MANNEQUIN_MAT.dispose();
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
       threeRef.current = null;
     };
   }, []);
 
-  // ── Rebuild body when bodyType or measurements change ─────────────────────
+  // ── Load / swap body when bodyType or height changes ─────────────────────
   useEffect(() => {
     const t = threeRef.current;
     if (!t) return;
 
-    if (bodyRef.current) {
-      disposeObject(bodyRef.current);
-      t.scene.remove(bodyRef.current);
-      bodyRef.current = null;
+    const cfg     = BODY_TYPES[bodyType] || BODY_TYPES.male_adult;
+    const targetH = measurements?.height ? measurements.height / 1000 : cfg.defaultH;
+    const path    = MODEL_PATHS[cfg.gender];
+
+    function applyModel(gltf) {
+      // Remove old body
+      if (bodyRef.current) {
+        disposeObject(bodyRef.current);
+        t.scene.remove(bodyRef.current);
+        bodyRef.current = null;
+      }
+
+      // Clone so we don't mutate the cache
+      const model = gltf.scene.clone(true);
+
+      // Strip all original materials — apply clean dress-form material
+      model.traverse(node => {
+        if (node.isMesh) {
+          node.material  = MANNEQUIN_MAT;
+          node.castShadow = true;
+          node.receiveShadow = true;
+        }
+      });
+
+      // Scale to target height
+      const box    = new THREE.Box3().setFromObject(model);
+      const modelH = box.max.y - box.min.y;
+      const scale  = targetH / modelH;
+      model.scale.setScalar(scale);
+
+      // Recompute box after scale, lift feet to y=0
+      box.setFromObject(model);
+      model.position.y = -box.min.y;
+
+      t.scene.add(model);
+      bodyRef.current = model;
+
+      // Record waist Y for pattern overlay (61.5% of height)
+      waistYRef.current = targetH * 0.615;
+
+      // Recentre camera orbit
+      const midY = targetH * 0.52;
+      t.controls.target.set(0, midY, 0);
+      t.camera.position.set(0, midY, targetH * 2.6);
+      t.camera.lookAt(0, midY, 0);
+      t.controls.update();
+
+      setLoading(false);
     }
 
-    const cfg = BODY_TYPES[bodyType] || BODY_TYPES.male_adult;
+    // Use cache if available
+    if (modelCache[cfg.gender]) {
+      applyModel(modelCache[cfg.gender]);
+      return;
+    }
 
-    // Height from measurements (mm → metres)
-    const heightM = measurements?.height
-      ? measurements.height / 1000
-      : cfg.defaultH;
-
-    const mannequin = new cfg.Factory(heightM);
-    // mannequin is a THREE.Group — add to our scene
-    t.scene.add(mannequin);
-    bodyRef.current = mannequin;
-
-    // Centre orbit on body midpoint
-    t.controls.target.set(0, heightM * 0.55, 0);
-    t.camera.position.set(0, heightM * 0.55, heightM * 3);
-    t.camera.lookAt(0, heightM * 0.55, 0);
-    t.controls.update();
-
+    setLoading(true);
+    loader.load(
+      path,
+      (gltf) => {
+        modelCache[cfg.gender] = gltf;
+        applyModel(gltf);
+      },
+      undefined,
+      (err) => {
+        console.error('Model load error:', err);
+        setLoading(false);
+      }
+    );
   }, [bodyType, measurements?.height]);
 
-  // ── Update pattern lines ──────────────────────────────────────────────────
+  // ── Pattern overlay ───────────────────────────────────────────────────────
   useEffect(() => {
     const t = threeRef.current;
     if (!t) return;
 
     if (patternRef.current) {
-      disposeObject(patternRef.current);
+      patternRef.current.geometry?.dispose();
       t.scene.remove(patternRef.current);
       patternRef.current = null;
     }
 
     if (patternState) {
-      const lines = buildPatternLines(patternState);
+      const lines = buildPatternLines(patternState, waistYRef.current);
       if (lines) { t.scene.add(lines); patternRef.current = lines; }
     }
   }, [patternState]);
@@ -228,9 +277,9 @@ export default function MannequinViewer({ measurements, patternState, bodyType =
   const setCameraPreset = useCallback((preset) => {
     const t = threeRef.current;
     if (!t) return;
-    const h = measurements?.height ? measurements.height / 1000 : 1.8;
-    const ty = h * 0.55;
-    const d  = h * 2.8;
+    const h  = measurements?.height ? measurements.height / 1000 : 1.8;
+    const ty = h * 0.52;
+    const d  = h * 2.6;
     t.controls.target.set(0, ty, 0);
     switch (preset) {
       case 'front': t.camera.position.set(0,  ty,  d); break;
@@ -245,6 +294,18 @@ export default function MannequinViewer({ measurements, patternState, bodyType =
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
+
+      {/* Loading indicator */}
+      {loading && (
+        <div style={{
+          position: 'absolute', inset: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: 'var(--color-text-dim)', fontSize: 12,
+          fontFamily: 'var(--font-mono)', pointerEvents: 'none',
+        }}>
+          Loading body…
+        </div>
+      )}
 
       {/* Camera presets */}
       <div style={{
@@ -263,8 +324,8 @@ export default function MannequinViewer({ measurements, patternState, bodyType =
             borderRadius: 4, cursor: 'pointer',
             backdropFilter: 'blur(4px)',
           }}
-          onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-text)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = 'var(--color-text-dim)'; e.currentTarget.style.borderColor = 'var(--color-border)'; }}
+          onMouseEnter={e => { e.currentTarget.style.color='var(--color-text)'; e.currentTarget.style.borderColor='var(--color-accent)'; }}
+          onMouseLeave={e => { e.currentTarget.style.color='var(--color-text-dim)'; e.currentTarget.style.borderColor='var(--color-border)'; }}
           >{p}</button>
         ))}
       </div>

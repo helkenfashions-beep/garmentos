@@ -1,65 +1,28 @@
 import { useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { Male }   from '../lib/mannequin/bodies/Male.js';
+import { Female } from '../lib/mannequin/bodies/Female.js';
+import { Child }  from '../lib/mannequin/bodies/Child.js';
 
-// ─── Body geometry helpers ───────────────────────────────────────────────────
+// ─── Body type config ────────────────────────────────────────────────────────
+// mannequin.js uses height in metres (default Male 1.8, Female 1.7, Child 1.15)
 
-const TAU = 2 * Math.PI;
+const BODY_TYPES = {
+  male_adult:   { label: 'Male',         Factory: Male,   defaultH: 1.8  },
+  female_adult: { label: 'Female',       Factory: Female, defaultH: 1.7  },
+  male_child:   { label: 'Boy',          Factory: Child,  defaultH: 1.15 },
+  female_child: { label: 'Girl',         Factory: Child,  defaultH: 1.10 },
+};
 
-/**
- * Derive all body heights and radii from measurement inputs.
- * All values in mm — matching the canvas coordinate system.
- */
-function deriveBodyDims(m) {
-  const H = m.height;
+// mannequin.js internal units: ~1 unit ≈ 80mm at height=1.8
+// The mannequin stands so its feet touch y = GROUND_LEVEL (-0.7)
+// We keep all Three.js work in mannequin.js native units here
+// Pattern state arrives in mm — we scale for the overlay separately
 
-  // Radii from girths (circumference = 2πr)
-  const neckR      = m.neckGirth      / TAU;
-  const chestR     = m.chest          / TAU;
-  const waistR     = m.waist          / TAU;
-  const hipR       = m.hip            / TAU;
-  const seatR      = m.seat           / TAU;
-  const thighR     = m.upperThighGirth / TAU;
-  const kneeR      = m.kneeGirth      / TAU;
-  const calfR      = m.calfGirth      / TAU;
-  const upperArmR  = m.upperArmGirth  / TAU;
-  const wristR     = m.wristGirth     / TAU;
-
-  // Heights from floor (mm)
-  const headR      = H * 0.065;                         // ~116mm
-  const headCtrH   = H - headR;                         // head centre Y
-  const waistH     = H * 0.615;                         // natural waist ~61.5% of height
-  const crotchH    = waistH - m.bodyRise;               // floor to crotch
-  const hipH       = waistH - 200;                      // hip fullest ~20cm below waist
-  const seatH      = hipH - 60;                         // seat slightly below hip
-  const shoulderH  = waistH + m.backWaistLength;        // base of neck
-  const neckTopH   = shoulderH + H * 0.04;              // neck top
-  const kneeH      = crotchH * 0.62;                    // knee ~62% of inseam
-  const ankleH     = 70;                                // fixed ankle height
-
-  // Approximate elbow at hip level, wrist below that
-  const elbowH     = hipH + 20;
-  const wristH_    = elbowH - (shoulderH - elbowH) * 1.15;
-
-  // Spacing from body centreline
-  const legSpacing = hipR * 0.38;
-  const armSpacing = m.shoulderWidth / 2;
-
-  return {
-    H, headR, headCtrH,
-    neckR, neckTopH, shoulderH,
-    chestR, waistR, hipR, seatR,
-    thighR, kneeR, calfR, upperArmR, wristR,
-    waistH, crotchH, hipH, seatH,
-    kneeH, ankleH, elbowH, wristH: wristH_,
-    legSpacing, armSpacing,
-  };
-}
-
-/**
- * Dispose all geometry and materials in a THREE.Object3D tree.
- */
+// ─── Dispose helper ──────────────────────────────────────────────────────────
 function disposeObject(obj) {
+  if (!obj) return;
   obj.traverse(o => {
     if (o.geometry) o.geometry.dispose();
     if (o.material) {
@@ -69,95 +32,15 @@ function disposeObject(obj) {
   });
 }
 
-/**
- * Build the parametric mannequin as a THREE.Group.
- * All coordinates in mm.
- */
-function buildMannequinGroup(measurements) {
-  const d   = deriveBodyDims(measurements);
-  const grp = new THREE.Group();
-
-  const mat = new THREE.MeshStandardMaterial({
-    color:     0x8e9ba8,   // neutral blue-grey — reads on dark background
-    roughness: 0.82,
-    metalness: 0.02,
-  });
-
-  // ── Torso — LatheGeometry (profile revolved around Y axis) ──────────────────
-  // Points ordered bottom to top so normals face outward
-  const torsoProfile = [
-    new THREE.Vector2(d.thighR * 0.65,        d.crotchH),
-    new THREE.Vector2(d.seatR,                d.seatH),
-    new THREE.Vector2(d.hipR,                 d.hipH),
-    new THREE.Vector2(d.hipR * 0.91,          (d.hipH + d.waistH) / 2),
-    new THREE.Vector2(d.waistR,               d.waistH),
-    new THREE.Vector2(d.waistR * 1.05,        (d.waistH + d.shoulderH - d.backWaistLength * 0.4) / 2),
-    new THREE.Vector2(d.chestR,               d.shoulderH - measurements.backWaistLength * 0.4),
-    new THREE.Vector2(d.armSpacing * 0.82,    d.shoulderH),
-    new THREE.Vector2(d.neckR * 1.6,          d.neckTopH - 30),
-    new THREE.Vector2(d.neckR,                d.neckTopH + 40),
-  ];
-  grp.add(new THREE.Mesh(new THREE.LatheGeometry(torsoProfile, 36), mat));
-
-  // ── Head ────────────────────────────────────────────────────────────────────
-  const head = new THREE.Mesh(new THREE.SphereGeometry(d.headR, 28, 22), mat);
-  head.position.set(0, d.headCtrH, 0);
-  grp.add(head);
-
-  // ── Helper: tapered cylinder (frustum) ─────────────────────────────────────
-  function addCylinder(topR, botR, topY, botY, x, z) {
-    const h   = Math.abs(topY - botY);
-    const midY = (topY + botY) / 2;
-    const cyl = new THREE.Mesh(new THREE.CylinderGeometry(topR, botR, h, 16), mat);
-    cyl.position.set(x, midY, z);
-    grp.add(cyl);
-  }
-
-  // ── Shoulder cap spheres (fill shoulder junction gap) ──────────────────────
-  function addSphere(r, x, y, z) {
-    const s = new THREE.Mesh(new THREE.SphereGeometry(r, 14, 12), mat);
-    s.position.set(x, y, z);
-    grp.add(s);
-  }
-
-  // ── Legs ────────────────────────────────────────────────────────────────────
-  const ls = d.legSpacing;
-  // Upper leg (crotch → knee)
-  addCylinder(d.thighR, d.kneeR,  d.crotchH, d.kneeH, -ls, 0);
-  addCylinder(d.thighR, d.kneeR,  d.crotchH, d.kneeH,  ls, 0);
-  // Lower leg (knee → ankle + 20mm)
-  addCylinder(d.kneeR, d.calfR,   d.kneeH,   d.ankleH + 20, -ls, 0);
-  addCylinder(d.kneeR, d.calfR,   d.kneeH,   d.ankleH + 20,  ls, 0);
-  // Foot stub
-  addCylinder(d.calfR * 0.75, d.calfR * 0.6, d.ankleH + 20, 0, -ls, 20);
-  addCylinder(d.calfR * 0.75, d.calfR * 0.6, d.ankleH + 20, 0,  ls, 20);
-
-  // ── Arms ────────────────────────────────────────────────────────────────────
-  const as = d.armSpacing;
-  const shoulderCapR = Math.min(d.upperArmR * 1.2, 55);
-  addSphere(shoulderCapR, -as, d.shoulderH, 0);
-  addSphere(shoulderCapR,  as, d.shoulderH, 0);
-  // Upper arm (shoulder → elbow)
-  addCylinder(d.upperArmR, d.upperArmR * 0.88, d.shoulderH, d.elbowH, -as, 0);
-  addCylinder(d.upperArmR, d.upperArmR * 0.88, d.shoulderH, d.elbowH,  as, 0);
-  // Forearm (elbow → wrist)
-  addCylinder(d.upperArmR * 0.82, d.wristR, d.elbowH, d.wristH, -as, 0);
-  addCylinder(d.upperArmR * 0.82, d.wristR, d.elbowH, d.wristH,  as, 0);
-
-  return grp;
-}
-
-/**
- * Build THREE.LineSegments for the 2D pattern, displayed as a flat plane
- * centred at waist height in front of the mannequin.
- * Pattern Y is inverted (SVG Y-down → Three.js Y-up).
- */
-function buildPatternLines(patternState, measurements) {
+// ─── Pattern overlay ─────────────────────────────────────────────────────────
+// Draws pattern segments as blue lines centred in front of the body.
+// Pattern mm → mannequin units: 1 mannequin unit ≈ 1800mm / 1.8 height = 1000mm/unit
+// so 1mm = 0.001 mannequin units
+function buildPatternLines(patternState) {
   const { points, segments } = patternState;
   const ptArr = Object.values(points);
   if (ptArr.length === 0) return null;
 
-  // Bounding-box centre of the pattern (in mm, SVG coords)
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const p of ptArr) {
     if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
@@ -166,20 +49,15 @@ function buildPatternLines(patternState, measurements) {
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
 
-  const d     = deriveBodyDims(measurements);
-  const zPos  = -(d.chestR + 80);   // slightly in front of the mannequin
+  const SCALE = 0.001;       // mm → mannequin units
+  const zPos  = 1.2;         // in front of body
+  const yBase = 1.2;         // approx waist height in mannequin units
 
-  // Convert a 2D pattern point to 3D world position
   function p3(px, py) {
-    return [
-      px - cx,                   // X: centred on body axis
-      d.waistH + (cy - py),      // Y: flip SVG Y, centre at waist
-      zPos,
-    ];
+    return [(px - cx) * SCALE, yBase + (cy - py) * SCALE, zPos];
   }
 
   const verts = [];
-
   for (const seg of Object.values(segments)) {
     const p1 = points[seg.p1];
     const p2 = points[seg.p2];
@@ -188,8 +66,7 @@ function buildPatternLines(patternState, measurements) {
     if (seg.type === 'line') {
       verts.push(...p3(p1.x, p1.y), ...p3(p2.x, p2.y));
     } else if (seg.type === 'bezier') {
-      const c1 = seg.c1; // { x, y }
-      const c2 = seg.c2;
+      const c1 = seg.c1, c2 = seg.c2;
       let prev = p3(p1.x, p1.y);
       for (let i = 1; i <= 20; i++) {
         const t = i / 20, mt = 1 - t;
@@ -201,67 +78,73 @@ function buildPatternLines(patternState, measurements) {
       }
     }
   }
-
   if (verts.length === 0) return null;
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-  const mat = new THREE.LineBasicMaterial({ color: 0x58a6ff });
-  return new THREE.LineSegments(geo, mat);
+  return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x58a6ff }));
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-const CAMERA_PRESETS = ['front', 'back', 'left', 'right'];
+const PRESETS = ['front', 'back', 'left', 'right'];
 
-export default function MannequinViewer({ measurements, patternState }) {
+export default function MannequinViewer({ measurements, patternState, bodyType = 'male_adult' }) {
   const mountRef   = useRef(null);
-  const threeRef   = useRef(null);  // { renderer, scene, camera, controls, animId }
-  const bodyRef    = useRef(null);  // current body THREE.Group in scene
-  const patternRef = useRef(null);  // current pattern THREE.LineSegments in scene
+  const threeRef   = useRef(null);
+  const bodyRef    = useRef(null);
+  const patternRef = useRef(null);
 
   // ── Scene setup (once) ────────────────────────────────────────────────────
   useEffect(() => {
     const mount = mountRef.current;
     const rect  = mount.getBoundingClientRect();
-    const W     = rect.width  || 400;
-    const H     = rect.height || 600;
+    const W = rect.width  || 480;
+    const H = rect.height || 720;
 
-    // Renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(W, H);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x0d1117);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     mount.appendChild(renderer.domElement);
 
-    // Scene
     const scene = new THREE.Scene();
 
-    // Camera
-    const camera = new THREE.PerspectiveCamera(45, W / H, 1, 20000);
-    const defH   = 1780 * 0.5;         // centre of default body
-    camera.position.set(0, defH, 1780 * 1.6);
-    camera.lookAt(0, defH, 0);
-
-    // Lights
-    scene.add(new THREE.AmbientLight(0xffffff, 0.45));
-    const sun = new THREE.DirectionalLight(0xffffff, 0.75);
-    sun.position.set(600, 1500, 1000);
+    // Lighting — matching mannequin.js's own setup for best visual
+    const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambient);
+    const sun = new THREE.DirectionalLight(0xffffff, 2.75);
+    sun.decay = 0;
+    sun.position.set(0, 4, 2).setLength(15);
+    sun.castShadow = true;
     scene.add(sun);
-    const fill = new THREE.DirectionalLight(0x8899dd, 0.25);
-    fill.position.set(-800, 400, -400);
-    scene.add(fill);
 
-    // OrbitControls
+    // Ground shadow disc
+    const groundGeo = new THREE.CircleGeometry(3, 40);
+    const groundMat = new THREE.MeshLambertMaterial({ color: 0x161b22 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.7; // GROUND_LEVEL
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Camera
+    const camera = new THREE.PerspectiveCamera(30, W / H, 0.01, 200);
+    camera.position.set(0, 1.2, 5);
+    camera.lookAt(0, 1.2, 0);
+
+    // Controls
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, defH, 0);
+    controls.target.set(0, 1.2, 0);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.minDistance   = 100;
-    controls.maxDistance   = 8000;
+    controls.minDistance = 0.5;
+    controls.maxDistance = 20;
     controls.update();
 
-    // Animation loop
     let animId;
     function animate() {
       animId = requestAnimationFrame(animate);
@@ -272,13 +155,11 @@ export default function MannequinViewer({ measurements, patternState }) {
 
     threeRef.current = { renderer, scene, camera, controls, animId };
 
-    // Resize observer
     const ro = new ResizeObserver(() => {
       const t = threeRef.current;
       if (!t) return;
-      const W2 = mount.clientWidth;
-      const H2 = mount.clientHeight;
-      if (W2 === 0 || H2 === 0) return;
+      const W2 = mount.clientWidth, H2 = mount.clientHeight;
+      if (!W2 || !H2) return;
       t.renderer.setSize(W2, H2);
       t.camera.aspect = W2 / H2;
       t.camera.updateProjectionMatrix();
@@ -295,26 +176,38 @@ export default function MannequinViewer({ measurements, patternState }) {
     };
   }, []);
 
-  // ── Rebuild body when measurements change ─────────────────────────────────
+  // ── Rebuild body when bodyType or measurements change ─────────────────────
   useEffect(() => {
     const t = threeRef.current;
-    if (!t || !measurements) return;
+    if (!t) return;
 
     if (bodyRef.current) {
       disposeObject(bodyRef.current);
       t.scene.remove(bodyRef.current);
+      bodyRef.current = null;
     }
-    const body = buildMannequinGroup(measurements);
-    t.scene.add(body);
-    bodyRef.current = body;
 
-    // Recentre orbit target at new waist height
-    const d = deriveBodyDims(measurements);
-    t.controls.target.set(0, d.waistH, 0);
+    const cfg = BODY_TYPES[bodyType] || BODY_TYPES.male_adult;
+
+    // Height from measurements (mm → metres)
+    const heightM = measurements?.height
+      ? measurements.height / 1000
+      : cfg.defaultH;
+
+    const mannequin = new cfg.Factory(heightM);
+    // mannequin is a THREE.Group — add to our scene
+    t.scene.add(mannequin);
+    bodyRef.current = mannequin;
+
+    // Centre orbit on body midpoint
+    t.controls.target.set(0, heightM * 0.55, 0);
+    t.camera.position.set(0, heightM * 0.55, heightM * 3);
+    t.camera.lookAt(0, heightM * 0.55, 0);
     t.controls.update();
-  }, [measurements]);
 
-  // ── Rebuild pattern lines when patternState changes ───────────────────────
+  }, [bodyType, measurements?.height]);
+
+  // ── Update pattern lines ──────────────────────────────────────────────────
   useEffect(() => {
     const t = threeRef.current;
     if (!t) return;
@@ -325,77 +218,54 @@ export default function MannequinViewer({ measurements, patternState }) {
       patternRef.current = null;
     }
 
-    if (patternState && measurements) {
-      const lines = buildPatternLines(patternState, measurements);
-      if (lines) {
-        t.scene.add(lines);
-        patternRef.current = lines;
-      }
+    if (patternState) {
+      const lines = buildPatternLines(patternState);
+      if (lines) { t.scene.add(lines); patternRef.current = lines; }
     }
-  }, [patternState, measurements]);
+  }, [patternState]);
 
   // ── Camera presets ────────────────────────────────────────────────────────
   const setCameraPreset = useCallback((preset) => {
     const t = threeRef.current;
     if (!t) return;
-    const d    = measurements ? deriveBodyDims(measurements) : { waistH: 890 };
-    const dist = measurements ? measurements.height * 1.5 : 2670;
-    const ty   = d.waistH;
-
+    const h = measurements?.height ? measurements.height / 1000 : 1.8;
+    const ty = h * 0.55;
+    const d  = h * 2.8;
     t.controls.target.set(0, ty, 0);
     switch (preset) {
-      case 'front': t.camera.position.set(0,  ty,  dist); break;
-      case 'back':  t.camera.position.set(0,  ty, -dist); break;
-      case 'left':  t.camera.position.set(-dist, ty, 0);  break;
-      case 'right': t.camera.position.set( dist, ty, 0);  break;
+      case 'front': t.camera.position.set(0,  ty,  d); break;
+      case 'back':  t.camera.position.set(0,  ty, -d); break;
+      case 'left':  t.camera.position.set(-d, ty,  0); break;
+      case 'right': t.camera.position.set( d, ty,  0); break;
     }
     t.camera.lookAt(0, ty, 0);
     t.controls.update();
-  }, [measurements]);
+  }, [measurements?.height]);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      {/* Three.js canvas mount */}
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
 
-      {/* Camera preset buttons */}
+      {/* Camera presets */}
       <div style={{
-        position: 'absolute',
-        bottom: 10,
-        left: '50%',
+        position: 'absolute', bottom: 10, left: '50%',
         transform: 'translateX(-50%)',
-        display: 'flex',
-        gap: 4,
-        pointerEvents: 'auto',
+        display: 'flex', gap: 4,
       }}>
-        {CAMERA_PRESETS.map(p => (
-          <button
-            key={p}
-            onClick={() => setCameraPreset(p)}
-            style={{
-              padding: '3px 9px',
-              fontSize: 10,
-              fontFamily: 'var(--font-mono)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.06em',
-              backgroundColor: 'rgba(22,27,34,0.85)',
-              color: 'var(--color-text-dim)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 4,
-              cursor: 'pointer',
-              backdropFilter: 'blur(4px)',
-            }}
-            onMouseEnter={e => {
-              e.currentTarget.style.color = 'var(--color-text)';
-              e.currentTarget.style.borderColor = 'var(--color-accent)';
-            }}
-            onMouseLeave={e => {
-              e.currentTarget.style.color = 'var(--color-text-dim)';
-              e.currentTarget.style.borderColor = 'var(--color-border)';
-            }}
-          >
-            {p}
-          </button>
+        {PRESETS.map(p => (
+          <button key={p} onClick={() => setCameraPreset(p)} style={{
+            padding: '3px 9px', fontSize: 10,
+            fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
+            letterSpacing: '0.06em',
+            backgroundColor: 'rgba(22,27,34,0.85)',
+            color: 'var(--color-text-dim)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 4, cursor: 'pointer',
+            backdropFilter: 'blur(4px)',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-text)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; }}
+          onMouseLeave={e => { e.currentTarget.style.color = 'var(--color-text-dim)'; e.currentTarget.style.borderColor = 'var(--color-border)'; }}
+          >{p}</button>
         ))}
       </div>
     </div>

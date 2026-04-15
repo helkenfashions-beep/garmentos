@@ -17,6 +17,7 @@ export default function App() {
   const { measurements, updateMeasurement } = useMeasurements();
   const [patternState, setPatternState] = useState(null);
   const handlePatternChange = useCallback((ps) => setPatternState(ps), []);
+  const [bodyType, setBodyType] = useState('male_adult');
 
   // ── Layout ────────────────────────────────────────────────────────────────
   // viewMode: 'split' | '2d' | '3d'
@@ -155,6 +156,30 @@ export default function App() {
           ))}
         </div>
 
+        {/* Body type selector — only when 3D panel is visible */}
+        {showMannequin && (
+          <>
+            <span style={{ color: 'var(--color-border)', fontSize: 11 }}>|</span>
+            <select
+              value={bodyType}
+              onChange={e => setBodyType(e.target.value)}
+              style={{
+                padding: '3px 6px', fontSize: 10,
+                fontFamily: 'var(--font-mono)',
+                backgroundColor: 'var(--color-surface)',
+                color: 'var(--color-text-dim)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 4, cursor: 'pointer',
+              }}
+            >
+              <option value="male_adult">Adult Male</option>
+              <option value="female_adult">Adult Female</option>
+              <option value="male_child">Child Boy</option>
+              <option value="female_child">Child Girl</option>
+            </select>
+          </>
+        )}
+
         {/* Measurements toggle — only when 3D panel is visible */}
         {showMannequin && (
           <>
@@ -243,6 +268,7 @@ export default function App() {
             <MannequinViewer
               measurements={measurements}
               patternState={patternState}
+              bodyType={bodyType}
             />
 
             {/* Measurement panel overlay */}

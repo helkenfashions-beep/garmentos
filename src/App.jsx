@@ -27,6 +27,8 @@ export default function App() {
         case 'p': setActiveTool(TOOLS.POINT);  break;
         case 'l': setActiveTool(TOOLS.LINE);   break;
         case 'b': setActiveTool(TOOLS.BEZIER); break;
+        case 'r': setActiveTool(TOOLS.RECT);   break;
+        case 'c': setActiveTool(TOOLS.CIRCLE); break;
         case 'g': setShowGrid(v => !v);        break;
       }
     }
@@ -40,6 +42,8 @@ export default function App() {
     [TOOLS.POINT]:  'Place Point',
     [TOOLS.LINE]:   'Draw Line',
     [TOOLS.BEZIER]: 'Draw Bezier Curve',
+    [TOOLS.RECT]:   'Draw Rectangle',
+    [TOOLS.CIRCLE]: 'Draw Circle',
   };
 
   return (
@@ -129,7 +133,7 @@ export default function App() {
         </span>
         <span style={{ color: 'var(--color-border)' }}>|</span>
         <span style={{ color: 'var(--color-text-muted)' }}>
-          S — Select &nbsp; P — Point &nbsp; L — Line &nbsp; B — Bezier &nbsp; G — Grid &nbsp; Ctrl+Z — Undo &nbsp; Esc — Cancel
+          S — Select &nbsp; P — Point &nbsp; L — Line &nbsp; B — Bezier &nbsp; R — Rect &nbsp; C — Circle &nbsp; G — Grid &nbsp; Ctrl+Z — Undo &nbsp; Esc — Cancel &nbsp; Right-drag — Quick rect
         </span>
       </footer>
     </div>

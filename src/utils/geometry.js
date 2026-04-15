@@ -155,6 +155,51 @@ export function newId(prefix = 'id') {
   return `${prefix}_${Date.now()}_${_idCounter++}`;
 }
 
+// ─── Shape helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Return 4 cubic bezier segment specs that approximate a circle.
+ * Uses kappa = 0.5523 — standard quarter-circle bezier approximation.
+ * Each spec has { p1, p2, c1, c2 } as {x,y} positions (not IDs).
+ */
+export function circleAsBezierSegments(cx, cy, r) {
+  const k = 0.5523;
+  const top    = { x: cx,     y: cy - r };
+  const right  = { x: cx + r, y: cy     };
+  const bottom = { x: cx,     y: cy + r };
+  const left   = { x: cx - r, y: cy     };
+  return [
+    { p1: top,    p2: right,  c1: { x: cx + r * k, y: cy - r     }, c2: { x: cx + r,     y: cy - r * k } },
+    { p1: right,  p2: bottom, c1: { x: cx + r,     y: cy + r * k }, c2: { x: cx + r * k, y: cy + r     } },
+    { p1: bottom, p2: left,   c1: { x: cx - r * k, y: cy + r     }, c2: { x: cx - r,     y: cy + r * k } },
+    { p1: left,   p2: top,    c1: { x: cx - r,     y: cy - r * k }, c2: { x: cx - r * k, y: cy - r     } },
+  ];
+}
+
+/**
+ * Return a new p2 position that is newLength away from p1, along the same direction.
+ */
+export function extendLineP2(p1, p2, newLength) {
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  const d  = Math.sqrt(dx * dx + dy * dy) || 1;
+  return { x: p1.x + (dx / d) * newLength, y: p1.y + (dy / d) * newLength };
+}
+
+/**
+ * Scale a bezier curve to a new arc length by scaling all three moving points
+ * (c1, c2, p2) relative to the fixed anchor p1.
+ */
+export function scaleBezierFromP1(p1, c1, c2, p2, newLength) {
+  const current = bezierLength(p1, c1, c2, p2);
+  const sf = current > 0 ? newLength / current : 1;
+  return {
+    c1: { x: p1.x + (c1.x - p1.x) * sf, y: p1.y + (c1.y - p1.y) * sf },
+    c2: { x: p1.x + (c2.x - p1.x) * sf, y: p1.y + (c2.y - p1.y) * sf },
+    p2: { x: p1.x + (p2.x - p1.x) * sf, y: p1.y + (p2.y - p1.y) * sf },
+  };
+}
+
 // ─── Grid helpers ────────────────────────────────────────────────────────────
 
 /**

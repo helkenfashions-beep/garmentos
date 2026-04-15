@@ -6,6 +6,8 @@ export const TOOLS = {
   POINT:   'point',
   LINE:    'line',
   BEZIER:  'bezier',
+  RECT:    'rect',
+  CIRCLE:  'circle',
 };
 
 const TOOL_DEFS = [
@@ -56,6 +58,26 @@ const TOOL_DEFS = [
         <path d="M2 14 C2 4, 14 12, 14 2"/>
         <circle cx="2" cy="4" r="1" fill="none" strokeDasharray="2 1"/>
         <circle cx="14" cy="12" r="1" fill="none" strokeDasharray="2 1"/>
+      </svg>
+    ),
+  },
+  {
+    id: TOOLS.RECT,
+    label: 'Rectangle',
+    shortcut: 'R',
+    icon: (
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="16" height="16">
+        <rect x="2" y="4" width="12" height="8" rx="1"/>
+      </svg>
+    ),
+  },
+  {
+    id: TOOLS.CIRCLE,
+    label: 'Circle',
+    shortcut: 'C',
+    icon: (
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="16" height="16">
+        <circle cx="8" cy="8" r="5.5"/>
       </svg>
     ),
   },

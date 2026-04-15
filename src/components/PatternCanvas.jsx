@@ -458,8 +458,10 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
           return;
         }
       }
-      selectionSourceRef.current = 'clear';
-      dispatch({ type: 'SET_SELECTED', ids: [] });
+      // Clicked empty space — start a left-drag marquee.
+      // Decide on mouseUp: if dragged → box select, if short click → deselect.
+      shapeDragRef.current = { tool: 'marquee', start: pt };
+      setShapeDrag({ tool: 'marquee', start: pt, end: pt });
       return;
     }
 
@@ -535,7 +537,22 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
           rightClickWasRect.current = true;
         }
       } else {
-        if (screenDist >= RECT_DRAG_THRESHOLD) {
+        if (tool === 'marquee') {
+          if (screenDist >= RECT_DRAG_THRESHOLD) {
+            // Real drag — box select
+            const minX = Math.min(start.x, end.x), maxX = Math.max(start.x, end.x);
+            const minY = Math.min(start.y, end.y), maxY = Math.max(start.y, end.y);
+            const inside = Object.values(state.points)
+              .filter(p => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY)
+              .map(p => p.id);
+            selectionSourceRef.current = inside.length > 0 ? 'marquee' : 'clear';
+            dispatch({ type: 'SET_SELECTED', ids: inside });
+          } else {
+            // Short click on empty space — deselect all
+            selectionSourceRef.current = 'clear';
+            dispatch({ type: 'SET_SELECTED', ids: [] });
+          }
+        } else if (screenDist >= RECT_DRAG_THRESHOLD) {
           if (tool === 'rect')   createRect(start, end);
           if (tool === 'circle') createCircle(start, end);
         }

@@ -1,257 +1,260 @@
 /**
  * Trouser Block Engine — Winifred Aldrich system (Metric Pattern Cutting)
- * All coordinates in mm. Origin = top-left of block bounding box.
- * Y-axis: positive downward (SVG convention, matches PatternCanvas).
+ * All coordinates in mm. Y-axis positive downward (SVG convention).
  *
- * Construction sequence follows Aldrich strictly:
- *   1. Crease line (vertical centre of leg)
- *   2. Horizontal construction lines (waist → hip1 → hip2 → rise → knee → ankle)
- *   3. Front panel (left of crease) with fly bezier and dart
- *   4. Back panel (right overlay) with seat bezier and two darts
+ * Layout: two separate panels side by side.
+ *   LEFT  = Front panel  (side seam on left, fly/CF on right)
+ *   RIGHT = Back panel   (CB/seat seam on left, side seam on right)
  *
- * The crotch curve is ALWAYS a bezier — never a simple arc.
- * Upper thigh is used directly for crotch extension — never derived from hip.
+ * Each panel is drawn as a standalone closed outline.
+ * Crotch curves are ALWAYS bezier — never simple arcs.
+ * Upper thigh drives crotch fork directly.
  */
 
 // ─── ID helpers ──────────────────────────────────────────────────────────────
-let _idCounter = 0;
-function pid() { return 'bp_' + (++_idCounter); }
-function sid() { return 'bs_' + (++_idCounter); }
+let _id = 0;
+function pid() { return 'bp_' + (++_id); }
+function sid() { return 'bs_' + (++_id); }
+function pt(x, y)           { const id = pid(); return { id, x, y }; }
+function line(p1, p2)       { return { id: sid(), type: 'line',   p1: p1.id, p2: p2.id }; }
+function bez(p1, p2, c1, c2){ return { id: sid(), type: 'bezier', p1: p1.id, p2: p2.id, c1, c2 }; }
 
-// ─── Ease table by garment type ───────────────────────────────────────────────
+// ─── Ease presets ─────────────────────────────────────────────────────────────
 export const EASE_PRESETS = {
-  trouser: { thighEase: 100, seatEase: 40, waistEase: 20, label: 'Trouser (formal)' },
-  slack:   { thighEase:  65, seatEase: 30, waistEase: 15, label: 'Slacks'           },
-  jeans:   { thighEase:  30, seatEase: 20, waistEase: 10, label: 'Jeans'            },
+  trouser: { seat: 40, waist: 20, label: 'Trouser (formal)' },
+  slack:   { seat: 30, waist: 15, label: 'Slacks'           },
+  jeans:   { seat: 20, waist: 10, label: 'Jeans'            },
 };
 
-// ─── Pure math helpers ────────────────────────────────────────────────────────
-function pt(id, x, y) { return { id, x, y }; }
-
-function lineSeg(id, p1, p2) {
-  return { id, type: 'line', p1: p1.id, p2: p2.id };
-}
-
-function bezierSeg(id, p1, p2, c1, c2) {
-  // c1, c2 are absolute {x,y} control point positions
-  return { id, type: 'bezier', p1: p1.id, p2: p2.id, c1, c2 };
-}
-
 // ─── Main generator ───────────────────────────────────────────────────────────
-/**
- * @param {object} m  measurements object (all values in mm)
- * @param {string} garmentType  'trouser' | 'slack' | 'jeans'
- * @returns {{ points: object, segments: object, constructionLines: array }}
- */
 export function generateTrouserBlock(m, garmentType = 'trouser') {
-  _idCounter = 0; // reset so IDs are deterministic per generation
-
+  _id = 0;
   const ease = EASE_PRESETS[garmentType] ?? EASE_PRESETS.trouser;
 
-  // ── Measurements ────────────────────────────────────────────────────────────
-  const WC   = m.waist;             // waist circumference mm
-  const HC   = m.hip;               // hip circumference mm
-  const SEAT = m.seat ?? HC + 20;   // seat circumference mm
-  const BR   = m.bodyRise;          // body rise (waist to crotch when sitting) mm
-  const UTG  = m.upperThighGirth;   // upper thigh girth mm — used directly
-  const KG   = m.kneeGirth;         // knee girth mm
-  const WTK  = m.waistToKnee  ?? (m.height * 0.415); // waist to knee
-  const WTA  = m.waistToAnkle ?? (m.height * 0.623); // waist to ankle
-  const H2W  = m.hipToWaist   ?? 200; // hip1 distance below waist
+  // ── Body measurements (all mm) ─────────────────────────────────────────────
+  const WC   = m.waist;
+  const HC   = m.hip;
+  const SEAT = m.seat  ?? (HC + 20);
+  const BR   = m.bodyRise;
+  const UTG  = m.upperThighGirth;
+  const KG   = m.kneeGirth;
+  const WTK  = m.waistToKnee  ?? (m.height * 0.415);
+  const WTA  = m.waistToAnkle ?? (m.height * 0.623);
+  const H2W  = m.hipToWaist   ?? 200;
 
-  // ── Horizontal levels (Y values, positive downward) ─────────────────────────
-  const Y_WAIST = 0;
-  const Y_HIP1  = H2W * 0.5;           // first hip reference (~100mm below waist)
-  const Y_HIP2  = H2W;                 // main hip line
-  const Y_RISE  = BR;                  // body rise line (crotch level)
-  const Y_KNEE  = WTK;
-  const Y_ANKLE = WTA;
+  // ── Horizontal guide levels (Y, 0 = waist) ────────────────────────────────
+  const MG  = 60;                     // canvas margin
+  const yw  = MG;                     // waist
+  const yh1 = MG + H2W * 0.4;        // hip guide 1
+  const yh2 = MG + H2W;              // hip guide 2 (main hip line)
+  const yr  = MG + BR;               // body rise (crotch level)
+  const yk  = MG + WTK;              // knee
+  const ya  = MG + WTA;              // ankle / hem
 
-  // ── Width calculations ───────────────────────────────────────────────────────
-  // All widths are HALF-widths (one panel = half the body front or back)
+  // ── Panel width calculations ──────────────────────────────────────────────
+  // FRONT panel (Aldrich metric):
+  //   waist  = WC/4 + 2cm
+  //   hip    = HC/4 + ease
+  //   seat   = SEAT/4 + ease  (side seam reference at rise level)
+  //   fork   = max(SEAT/16, UTG-based) — crotch extension, used directly
+  const fWaistW = WC / 4 + 20;
+  const fHipW   = HC / 4 + ease.waist;
+  const fSeatW  = SEAT / 4 + ease.seat;
+  const fFork   = Math.max(SEAT / 16, (UTG - SEAT * 0.5) / 4);
 
-  // Front panel widths
-  const frontWaistHalf = WC / 4 + 20;          // 1/4 WC + 2cm
-  const frontHipHalf   = HC / 4 + ease.waistEase;
-  const frontSeatHalf  = SEAT / 4 + ease.seatEase;
+  // BACK panel (Aldrich metric):
+  //   waist  = WC/4 + 5cm  (wider than front for seat accommodation)
+  //   seat   = SEAT/4 + 5cm
+  //   fork   = 1.6× front fork (back requires more crotch room)
+  const bWaistW = WC / 4 + 50;
+  const bSeatW  = SEAT / 4 + 50;
+  const bFork   = fFork * 1.6;
 
-  // Crotch fork — using upper thigh directly (Aldrich + East African calibration)
-  const crotchFork = UTG / 4 - frontSeatHalf;   // extension beyond seat half-width
-  const crotchForkMin = SEAT / 16;               // minimum fork = 1/16 seat
-  const frontFork = Math.max(crotchFork, crotchForkMin);
+  // Hem (Aldrich: 0.125 × waist_cm + 13cm → in mm: 0.125 × WC + 130)
+  const hemTotal  = 0.125 * WC + 130;
+  const hemHalf   = hemTotal / 2;
 
-  // Knee and hem widths (half each side of crease)
-  const kneeHalf = (KG + ease.thighEase * 0.4) / 2;
-  const hemHalf  = (WC / 10 + 130) / 2;         // 0.125 × waist(cm) + 13cm → mm
+  // Knee — each panel contributes half the knee circumference + ease
+  const fKneeHalf = KG / 4 + 15;     // front half-width each side of crease
+  const bKneeHalf = KG / 4 + 20;     // back slightly wider
 
-  // Back panel widens over front
-  const backWaistHalf = WC / 4 + 50;            // 1/4 WC + 5cm
-  const backSeatHalf  = SEAT / 4 + 50;          // 1/4 seat + 5cm
-  const backFork      = frontFork * 1.6;        // back fork is wider than front
+  // ════════════════════════════════════════════════════════════════════════════
+  // FRONT PANEL
+  //
+  // Reference: crease line at X = cFx
+  //   cFx = MG + fSeatW   → so the outermost side-seam point is at X = MG
+  //
+  // At each level, outer = cFx − OUTER_HALF,  inner = cFx + INNER_HALF
+  //
+  //   Waist:  outer = side seam   → OUTER_HALF = fWaistW − 10mm (CF sits 10mm right of crease)
+  //           inner = CF/fly      → INNER_HALF = 10mm
+  //   Hip:    outer = fHipW from crease
+  //           inner = 0 (inner edge tracks the crease down to rise)
+  //   Rise:   outer = fSeatW from crease   (= MG, left edge)
+  //           inner = fFork past crease     (fork extends right)
+  //   Knee:   ±fKneeHalf (symmetric around crease)
+  //   Ankle:  ±hemHalf   (symmetric around crease)
+  // ════════════════════════════════════════════════════════════════════════════
 
-  // ── X origin — crease line at X=0, front panel is to the LEFT (neg X) ───────
-  // We'll use positive coords only: crease line at X = backFork + backSeatHalf
-  // so everything fits on screen. Then offset whole block right by MARGIN.
-  const MARGIN = 50;
-  const creaseX = MARGIN + backFork + backSeatHalf + 20;
+  const cFx = MG + fSeatW;           // front crease X
 
-  // ── Helper: absolute X relative to crease ────────────────────────────────────
-  function cx(offset) { return creaseX + offset; } // positive = right (back side)
-  function y(level)   { return MARGIN + level;    }
+  // Waist
+  const cfWX  = cFx + 10;             // CF at waist (10mm right of crease)
+  const fswX  = cfWX - fWaistW;       // side seam at waist
+
+  // Hip
+  const fshX  = cFx - fHipW;          // side seam at hip
+
+  // Rise
+  const fsrX  = MG;                   // side seam at rise = MG (left edge of panel)
+  const ffkX  = cFx + fFork;          // fork point (right of crease)
+
+  // Knee
+  const fokX  = cFx - fKneeHalf;      // outer knee
+  const fikX  = cFx + fKneeHalf;      // inner knee
+
+  // Ankle
+  const foaX  = cFx - hemHalf;        // outer ankle
+  const fiaX  = cFx + hemHalf;        // inner ankle
 
   const points   = {};
   const segments = {};
+  function add(p)  { points[p.id]   = p; return p; }
+  function seg(s)  { segments[s.id] = s; return s; }
 
-  function addPt(p)  { points[p.id]   = p; return p; }
-  function addSeg(s) { segments[s.id] = s; return s; }
+  // Front panel points
+  const fSW = add(pt(fswX,  yw));    // side seam waist
+  const fCW = add(pt(cfWX,  yw));    // CF waist
+  const fSH = add(pt(fshX,  yh2));   // side seam hip
+  const fSR = add(pt(fsrX,  yr));    // side seam rise
+  const fFK = add(pt(ffkX,  yr));    // fork
+  const fOK = add(pt(fokX,  yk));    // outer knee (side seam)
+  const fIK = add(pt(fikX,  yk));    // inner knee (inseam)
+  const fOA = add(pt(foaX,  ya));    // outer ankle
+  const fIA = add(pt(fiaX,  ya));    // inner ankle
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // CONSTRUCTION LINES (rendered as dashed — stored with label metadata)
-  // ═══════════════════════════════════════════════════════════════════════════
+  // Front outline segments
+  seg(line(fSW, fCW));               // top: waist line (side → CF)
+  seg(line(fSW, fSH));               // left: side seam waist → hip
+  seg(line(fSH, fSR));               // left: side seam hip → rise
+  seg(line(fSR, fOK));               // left: side seam rise → knee
+  seg(line(fOK, fOA));               // left: side seam knee → ankle
+  seg(line(fOA, fIA));               // bottom: hem (outer → inner)
+  seg(line(fIA, fIK));               // right: inseam ankle → knee
+  seg(line(fIK, fFK));               // right: inseam knee → fork
 
-  // Crease line — full length
-  const cl_top    = addPt(pt(pid(), cx(0), y(Y_WAIST - 20)));
-  const cl_bottom = addPt(pt(pid(), cx(0), y(Y_ANKLE + 20)));
-  const creaseSeg = addSeg({ ...lineSeg(sid(), cl_top, cl_bottom), construction: true, label: 'Crease' });
+  // Fly bezier: fork → CF waist (right side of front panel, crotch seam)
+  // Exits fork going STRAIGHT UP, curves LEFT to arrive at CF waist from below-right
+  const flyC1 = { x: ffkX,      y: yr - (yr - yw) * 0.55 };   // above fork, same X
+  const flyC2 = { x: cfWX + 35, y: yw + (yr - yw) * 0.18 };   // right-below CF waist
+  seg(bez(fFK, fCW, flyC1, flyC2));
 
-  // Horizontal construction lines (full width)
-  const guideLines = [
-    { name: 'Waist', yLevel: Y_WAIST },
-    { name: 'Hip 1', yLevel: Y_HIP1  },
-    { name: 'Hip 2', yLevel: Y_HIP2  },
-    { name: 'Rise',  yLevel: Y_RISE  },
-    { name: 'Knee',  yLevel: Y_KNEE  },
-    { name: 'Ankle', yLevel: Y_ANKLE },
-  ];
+  // Front dart: 2cm wide × 10cm deep, at WC/16 from CF
+  const fdX = cfWX - WC / 16;
+  const fdL = add(pt(fdX - 10, yw));
+  const fdR = add(pt(fdX + 10, yw));
+  const fdT = add(pt(fdX,      yw + 100));
+  seg(line(fdL, fdT));
+  seg(line(fdR, fdT));
 
-  const guideWidth = backFork + backSeatHalf + frontFork + frontSeatHalf + 40;
-  for (const g of guideLines) {
-    const gL = addPt(pt(pid(), cx(-(frontSeatHalf + frontFork + 20)), y(g.yLevel)));
-    const gR = addPt(pt(pid(), cx(backSeatHalf + backFork + 20),       y(g.yLevel)));
-    addSeg({ ...lineSeg(sid(), gL, gR), construction: true, label: g.name });
-  }
+  // ════════════════════════════════════════════════════════════════════════════
+  // BACK PANEL
+  //
+  // Placed to the RIGHT of front panel with a GAP.
+  // Reference: back crease at X = cBx
+  //   cBx = bStartX + bSeatW
+  //
+  //   Waist:  CB = 10mm LEFT of crease, raised 15mm  → back waist tilts toward CB
+  //           side seam = CB + bWaistW to the RIGHT
+  //   Hip:    CB ≈ crease; side seam = crease + bSeatW
+  //   Rise:   side seam = crease + bSeatW (same as hip)
+  //           fork = crease − bFork (extends LEFT, toward front panel)
+  //   Knee:   ±bKneeHalf (inner = left, outer = right)
+  //   Ankle:  inner = crease − (hemHalf+10);  outer = crease + (hemHalf+10)
+  // ════════════════════════════════════════════════════════════════════════════
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // FRONT PANEL
-  // ═══════════════════════════════════════════════════════════════════════════
+  const GAP       = 70;
+  const fPanelW   = fSeatW + fFork + 10;   // bounding width of front panel
+  const bStartX   = MG + fPanelW + GAP;
+  const cBx       = bStartX + bSeatW;      // back crease X
 
-  // Front waist points
-  // Centre front waist: slightly left of crease (dart offset)
-  const fCF_waist = addPt(pt(pid(), cx(-10),               y(Y_WAIST)));      // CF at waist
-  const fSide_waist = addPt(pt(pid(), cx(-frontWaistHalf), y(Y_WAIST)));      // side seam at waist
+  // CB and side seam at waist
+  const cbWX  = cBx - 10;
+  const cbWY  = yw - 15;             // CB raised 15mm relative to side waist
+  const bswX  = cbWX + bWaistW;      // side seam at waist (CB + back waist total)
 
-  // Front hip / seat
-  const fCF_hip  = addPt(pt(pid(), cx(-10),              y(Y_HIP2)));
-  const fSide_hip = addPt(pt(pid(), cx(-frontHipHalf),   y(Y_HIP2)));
+  // Hip
+  const bshX  = cBx + bSeatW;       // side seam at hip ≈ same as rise
 
-  // Rise line — crotch fork extends TOWARD front (negative X)
-  const fFork    = addPt(pt(pid(), cx(-(frontSeatHalf + frontFork)), y(Y_RISE)));
-  const fSide_rise = addPt(pt(pid(), cx(-frontSeatHalf),             y(Y_RISE)));
+  // Rise
+  const bsrX  = cBx + bSeatW;       // side seam at rise
+  const bfkX  = cBx - bFork;        // fork (extends LEFT of crease)
 
   // Knee
-  const fSide_knee = addPt(pt(pid(), cx(-kneeHalf), y(Y_KNEE)));
-  const fInner_knee = addPt(pt(pid(), cx(kneeHalf * 0.3), y(Y_KNEE)));
+  const bokX  = cBx + bKneeHalf;    // outer knee (side seam side)
+  const bikX  = cBx - bKneeHalf;    // inner knee (inseam side)
 
-  // Hem
-  const fSide_hem  = addPt(pt(pid(), cx(-hemHalf), y(Y_ANKLE)));
-  const fInner_hem = addPt(pt(pid(), cx(hemHalf),  y(Y_ANKLE)));
+  // Ankle
+  const boaX  = cBx + hemHalf + 10;
+  const biaX  = cBx - hemHalf - 10;
 
-  // ── Front waist line ──────────────────────────────────────────────────────
-  addSeg(lineSeg(sid(), fSide_waist, fCF_waist));
+  // Back panel points
+  const bCW = add(pt(cbWX,  cbWY));  // CB waist (raised)
+  const bSW = add(pt(bswX,  yw));    // side seam waist
+  const bSH = add(pt(bshX,  yh2));   // side seam hip
+  const bSR = add(pt(bsrX,  yr));    // side seam rise
+  const bFK = add(pt(bfkX,  yr));    // fork
+  const bOK = add(pt(bokX,  yk));    // outer knee
+  const bIK = add(pt(bikX,  yk));    // inner knee
+  const bOA = add(pt(boaX,  ya));    // outer ankle
+  const bIA = add(pt(biaX,  ya));    // inner ankle
 
-  // ── Front side seam: waist → hip → rise → knee → hem ────────────────────
-  addSeg(lineSeg(sid(), fSide_waist, fSide_hip));
-  addSeg(lineSeg(sid(), fSide_hip,   fSide_rise));
-  addSeg(lineSeg(sid(), fSide_rise,  fSide_knee));
-  addSeg(lineSeg(sid(), fSide_knee,  fSide_hem));
+  // Back outline segments
+  seg(line(bCW, bSW));               // top: waist line (CB → side)
+  seg(line(bSW, bSH));               // right: side seam waist → hip
+  seg(line(bSH, bSR));               // right: side seam hip → rise
+  seg(line(bSR, bOK));               // right: side seam rise → knee
+  seg(line(bOK, bOA));               // right: side seam knee → ankle
+  seg(line(bOA, bIA));               // bottom: hem
+  seg(line(bIA, bIK));               // left: inseam ankle → knee
+  seg(line(bIK, bFK));               // left: inseam knee → fork
 
-  // ── Front hem line ────────────────────────────────────────────────────────
-  addSeg(lineSeg(sid(), fSide_hem, fInner_hem));
-
-  // ── Front inseam: hem → knee → rise ──────────────────────────────────────
-  addSeg(lineSeg(sid(), fInner_hem, fInner_knee));
-  addSeg(lineSeg(sid(), fInner_knee, fFork));
-
-  // ── Front fly bezier curve (CF seam: fork → waist) ───────────────────────
-  // The fly curve departs at ~45° from the fork, curves smoothly to the CF waist
-  // Control point 1: directly above fork, bringing it vertical
-  // Control point 2: below CF waist, coming in horizontally
-  const flyC1 = { x: cx(-10), y: y(Y_RISE) };               // vertical rise above fork
-  const flyC2 = { x: cx(-10), y: y(Y_WAIST + (Y_RISE - Y_WAIST) * 0.25) }; // approach from below
-  addSeg(bezierSeg(sid(), fFork, fCF_waist, flyC1, flyC2));
-
-  // ── Front dart ───────────────────────────────────────────────────────────
-  // Dart at 1/16 WC from CF, 10cm long, 2cm wide
-  const dartOffset = WC / 16;
-  const dartX      = cx(-(10 + dartOffset));                 // negative = front side
-  const dL = addPt(pt(pid(), dartX - 10, y(Y_WAIST)));      // dart left leg
-  const dR = addPt(pt(pid(), dartX + 10, y(Y_WAIST)));      // dart right leg
-  const dTip = addPt(pt(pid(), dartX,    y(Y_WAIST + 100))); // dart tip 10cm down
-  addSeg(lineSeg(sid(), dL, dTip));
-  addSeg(lineSeg(sid(), dR, dTip));
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // BACK PANEL
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  // Back waist points — back sits slightly higher at CB (back waist angle)
-  const bCB_waist  = addPt(pt(pid(), cx(10),              y(Y_WAIST - 15)));  // CB raised 15mm
-  const bSide_waist = addPt(pt(pid(), cx(backWaistHalf),  y(Y_WAIST)));
-
-  // Back hip / seat
-  const bCB_hip    = addPt(pt(pid(), cx(10),              y(Y_HIP2)));
-  const bSide_hip  = addPt(pt(pid(), cx(backSeatHalf),    y(Y_HIP2)));
-
-  // Back rise — fork extends RIGHT (positive X toward back)
-  const bFork      = addPt(pt(pid(), cx(backSeatHalf + backFork), y(Y_RISE)));
-  const bSide_rise = addPt(pt(pid(), cx(backSeatHalf),            y(Y_RISE)));
-
-  // Back knee and hem (slightly wider than front)
-  const bSide_knee  = addPt(pt(pid(), cx(backWaistHalf * 0.75),  y(Y_KNEE)));
-  const bInner_knee = addPt(pt(pid(), cx(-kneeHalf * 0.35),       y(Y_KNEE)));
-  const bSide_hem   = addPt(pt(pid(), cx(hemHalf + 10),           y(Y_ANKLE)));
-  const bInner_hem  = addPt(pt(pid(), cx(-(hemHalf + 10)),        y(Y_ANKLE)));
-
-  // ── Back waist line ───────────────────────────────────────────────────────
-  addSeg(lineSeg(sid(), bSide_waist, bCB_waist));
-
-  // ── Back side seam ────────────────────────────────────────────────────────
-  addSeg(lineSeg(sid(), bSide_waist, bSide_hip));
-  addSeg(lineSeg(sid(), bSide_hip,   bSide_rise));
-  addSeg(lineSeg(sid(), bSide_rise,  bSide_knee));
-  addSeg(lineSeg(sid(), bSide_knee,  bSide_hem));
-
-  // ── Back hem line ─────────────────────────────────────────────────────────
-  addSeg(lineSeg(sid(), bSide_hem, bInner_hem));
-
-  // ── Back inseam ───────────────────────────────────────────────────────────
-  addSeg(lineSeg(sid(), bInner_hem, bInner_knee));
-  addSeg(lineSeg(sid(), bInner_knee, bFork));
-
-  // ── Back seat bezier curve (CB seam: fork → CB waist) ────────────────────
+  // Seat bezier: fork → CB waist (left side of back panel, crotch seam)
   // Deep dramatic curve for buttocks accommodation.
-  // Must not deviate more than 15mm from the CB vertical in the upper portion.
-  // Departs from fork at near-horizontal, sweeps up to CB waist.
-  const seatC1 = { x: cx(backSeatHalf + backFork * 0.5), y: y(Y_HIP2 + 30) }; // sweeping up through hip
-  const seatC2 = { x: cx(10 + 30), y: y(Y_WAIST + (Y_RISE - Y_WAIST) * 0.3) }; // approaches CB from right
-  addSeg(bezierSeg(sid(), bFork, bCB_waist, seatC1, seatC2));
+  // Exits fork going UPWARD-RIGHT, sweeps to arrive at CB from below.
+  const seatC1 = { x: bfkX + (cBx - bfkX) * 0.35, y: yr - (yr - yw) * 0.5  };  // up-right from fork
+  const seatC2 = { x: cbWX + 45,                   y: cbWY + (yr - cbWY) * 0.22 }; // below-right of CB
+  seg(bez(bFK, bCW, seatC1, seatC2));
 
-  // ── Back darts ───────────────────────────────────────────────────────────
-  // Dart 1: 12cm long, 2cm wide, at 1/3 back waist from CB
-  const bd1X   = cx(10 + backWaistHalf / 3);
-  const bd1L   = addPt(pt(pid(), bd1X - 10, y(Y_WAIST)));
-  const bd1R   = addPt(pt(pid(), bd1X + 10, y(Y_WAIST)));
-  const bd1Tip = addPt(pt(pid(), bd1X,      y(Y_WAIST + 120)));
-  addSeg(lineSeg(sid(), bd1L, bd1Tip));
-  addSeg(lineSeg(sid(), bd1R, bd1Tip));
+  // Back dart 1: 12cm deep × 2cm wide, at 1/3 across back waist from CB
+  const bwLen = bswX - cbWX;        // total back waist length
+  const bd1X  = cbWX + bwLen / 3;
+  const bd1L  = add(pt(bd1X - 10, yw));
+  const bd1R  = add(pt(bd1X + 10, yw));
+  const bd1T  = add(pt(bd1X,      yw + 120));
+  seg(line(bd1L, bd1T));
+  seg(line(bd1R, bd1T));
 
-  // Dart 2: 10cm long, at 2/3 back waist from CB
-  const bd2X   = cx(10 + (backWaistHalf * 2) / 3);
-  const bd2L   = addPt(pt(pid(), bd2X - 8, y(Y_WAIST)));
-  const bd2R   = addPt(pt(pid(), bd2X + 8, y(Y_WAIST)));
-  const bd2Tip = addPt(pt(pid(), bd2X,     y(Y_WAIST + 100)));
-  addSeg(lineSeg(sid(), bd2L, bd2Tip));
-  addSeg(lineSeg(sid(), bd2R, bd2Tip));
+  // Back dart 2: 10cm deep × 1.6cm wide, at 2/3 across back waist
+  const bd2X  = cbWX + (bwLen * 2) / 3;
+  const bd2L  = add(pt(bd2X - 8, yw));
+  const bd2R  = add(pt(bd2X + 8, yw));
+  const bd2T  = add(pt(bd2X,     yw + 100));
+  seg(line(bd2L, bd2T));
+  seg(line(bd2R, bd2T));
+
+  // ── Horizontal construction guide lines (span both panels) ─────────────────
+  const gx1 = MG - 20;
+  const gx2 = boaX + 20;
+  for (const [label, yLevel] of [
+    ['Waist', yw], ['Hip 1', yh1], ['Hip 2', yh2],
+    ['Rise',  yr], ['Knee',  yk],  ['Ankle',  ya],
+  ]) {
+    const gL = add(pt(gx1, yLevel));
+    const gR = add(pt(gx2, yLevel));
+    const gs  = { ...line(gL, gR), construction: true, label };
+    segments[gs.id] = gs;
+  }
 
   return { points, segments };
 }

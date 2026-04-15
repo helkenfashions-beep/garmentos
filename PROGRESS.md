@@ -1,6 +1,6 @@
 # GarmentOS — Build Progress
 
-## Current Stage: Stage 1 Complete
+## Current Stage: Stage 2 Complete
 
 ---
 
@@ -65,7 +65,59 @@ Split view — Three.js mannequin on the right panel, live geometric sync with t
 ---
 
 ## Stage 2 — Split View with Live 3D Sync
-Status: NOT STARTED
+Status: COMPLETE
+Date: April 15 2026
+Commit: e1dfb1a
+
+### What was built:
+
+**New files:**
+- `src/hooks/useMeasurements.js` — measurement state hook, ISO 8559 European defaults (all values in mm)
+- `src/components/MeasurementPanel.jsx` — 7-field input panel (height, chest, waist, hip, body rise, shoulder width, back waist length), cm display stored internally as mm, close button
+- `src/components/MannequinViewer.jsx` — full Three.js 3D scene (see below)
+
+**Modified files:**
+- `src/App.jsx` — rewritten as split-view shell
+- `src/components/PatternCanvas.jsx` — added `onPatternChange` prop with 80ms debounced sync
+
+**MannequinViewer capabilities:**
+- WebGL renderer (Three.js v0.183), antialias, dark background (#0d1117)
+- Procedural parametric mannequin body scaled from measurement inputs:
+  - Torso: LatheGeometry profile (12-point curve revolved 360° around Y axis), proportional to chest/waist/hip/seat girths and backWaistLength
+  - Head: SphereGeometry
+  - Shoulder caps: spheres at shoulder junction
+  - Legs: tapered CylinderGeometry pairs (upper + lower, with foot stub)
+  - Arms: tapered CylinderGeometry pairs (upper arm + forearm)
+  - All dimensions derived from measurements — body rescales in real time when measurements change
+- Lighting: ambient + directional key + blue-grey fill
+- OrbitControls — drag to rotate, scroll to zoom, right-drag to pan
+- Camera preset buttons: Front / Back / Left / Right
+- Orbit target automatically centres on waist height
+- ResizeObserver — camera aspect and renderer size update when panel is resized
+- Pattern sync: receives `patternState` from 2D canvas, draws all segments as blue THREE.LineSegments centred at waist height, 80mm in front of mannequin body. Y axis inverted (SVG Y-down → Three.js Y-up). Bezier curves sampled at 20 points.
+
+**App.jsx layout:**
+- Header: GarmentOS title + view mode toggle (2D / 2D|3D / 3D) + Measurements button
+- View modes: 2D-only (full canvas), Split (60/40 default), 3D-only (full mannequin)
+- Draggable divider: hover turns accent colour, drag resizes split ratio (clamped 20–80%)
+- Toolbar visible only when canvas panel is shown
+- Measurement panel: floating overlay on 3D panel, toggled from header button
+- Status bar: adapts to visible panels — shows tool + cursor coords for 2D, rotation hint for 3D
+
+**Architecture decisions:**
+- Body dimensions all in mm — same coordinate system as the 2D canvas
+- Pattern sync debounced 80ms — live drag does not flood the 3D scene
+- Scene teardown fully cleans up: geometry/material disposal, OrbitControls.dispose(), ResizeObserver.disconnect(), animationFrame cancel
+- Three.js import path: `three/addons/controls/OrbitControls.js` (v0.155+ path)
+
+### Known limitations at this stage:
+- Pattern pieces displayed as flat lines floating in front of mannequin — geometric draping onto body surface is Stage 3
+- Mannequin is procedurally built from primitives — will be replaced with MakeHuman/Anny mesh in Stage 2b
+- Two-way sync (drag point on 3D → update 2D canvas) not yet implemented — Stage 3 item
+- East African body defaults not yet active — European ISO 8559 size 40 loaded on launch
+
+### What Stage 3 will build on top of this:
+Trouser block engine — full Winifred Aldrich formula set generating the trouser block directly into the 2D canvas. Construction lines (horizontal guides: waist, hip, rise, knee, ankle), crease line, front panel, back panel, bezier crotch curve, darts. East African calibration layer architecture. The generated block syncs to the 3D panel through the existing pattern sync bridge.
 
 ## Stage 3 — Trouser Block Engine
 Status: NOT STARTED

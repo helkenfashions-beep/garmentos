@@ -189,7 +189,7 @@ Input: measurement values from user
 Output: interactive 3D body avatar that scales correctly
 Technology: Three.js, browser-based
 Complexity: moderate — Three.js has good documentation and examples
-East African calibration: future anthropometric data feeds the mannequin proportions
+East African calibration: Dr. Kinuthia's data feeds the mannequin proportions
 
 ### Stage 3 — Geometric pattern draping (Three.js)
 Input: completed 2D pattern pieces
@@ -209,7 +209,7 @@ Complexity: hard — but all components are free and documented
 Input: physical fabric samples from Nairobi market
 Output: GarmentOS fabric library with locally measured properties
 Method: partner with a textile testing lab or university with KES equipment
-Local university textile departments likely have access to fabric testing equipment
+Kenyatta University or University of Nairobi textile departments likely have access to fabric testing equipment
 
 ---
 
@@ -218,7 +218,7 @@ Local university textile departments likely have access to fabric testing equipm
 | Feature | Clo3D | GarmentOS target |
 |---|---|---|
 | 3D mannequin | Yes, static sizing | Yes, scaled from actual measurements |
-| Body standard | European/Asian | East African (anthropometric data) |
+| Body standard | European/Asian | East African (Dr. Kinuthia data) |
 | Interactive rotation | Yes | Yes (Three.js) |
 | Real time pattern update | Yes | Yes (Stage 3) |
 | Fabric physics | Yes, proprietary | Yes, open source (Stage 8) |
@@ -385,3 +385,55 @@ This changes the East African fabric database from a years-away research project
 *The complete publication list is at wanghmin.github.io/publication/*
 *All PDFs are freely available at the links above*
 *GitHub code repositories are linked for each paper that has them*
+
+---
+
+## 11. ADDITIONAL RESEARCH — TWO MINUTE PAPERS SOURCES
+
+Four additional sources found via Two Minute Papers YouTube channel.
+
+---
+
+**Dress-1-to-3 (SIGGRAPH 2025) — STAGE 3 RELEVANCE**
+Site: dress-1-to-3.github.io
+Paper: arxiv.org/abs/2502.03449 — free
+
+Reconstructs simulation-ready separated garments with sewing patterns from a single image using differentiable physics. The differentiable simulator optimises 2D pattern shape against 3D geometry — meaning it can work backwards from a desired 3D drape to correct the 2D pattern. Future GarmentOS feature: mannequin suggests corrections to the 2D canvas when fit is wrong. Authors from UCLA and University of Utah.
+
+---
+
+**Stable Cosserat Rods (SIGGRAPH 2025) — STAGE 9 FABRIC PHYSICS**
+Site: graphics.cs.utah.edu/research/projects/stable-cosserat-rods/
+PDF: free at Utah Graphics Lab site
+Code: github.com/jerry060599/YarnBall — free and open source
+Two Minute Papers: youtube.com/watch?v=2c8o65JiPQY
+
+Yarn-level cloth simulation at 65,000 vertices running at 32ms per frame on consumer GPU. Previously yarn-level was too slow for practical use — this makes it real time. Technical foundation for simulating how kitenge, cotton drill, and woven fabrics behave at the thread level. Stage 9 implementation should start here.
+
+---
+
+**Offset Geometric Contact / OGC (SIGGRAPH 2025) — STAGE 9 COLLISION DETECTION**
+Site: graphics.cs.utah.edu/research/projects/ogc/
+PDF: free at Utah Graphics Lab site
+Two Minute Papers: youtube.com/watch?v=7NF3CdXkm68
+
+50 layers of cloth with 246,000 vertices at 6.3ms per frame on GPU. More than two orders of magnitude faster than prior collision methods. Prevents fabric from intersecting itself or the body — essential for trouser folds, shirt tucks, and multi-layer garments. Without this the simulation produces artifacts that destroy designer trust.
+
+---
+
+**Comprehensive Cloth Simulation Survey (The Visual Computer, 2025)**
+Link: rdcu.be/cWPfD
+Also: link.springer.com/article/10.1007/s00371-025-04182-3
+
+Full survey from physically-based to learning-based cloth simulation. Map of the entire field in one document. Use as the reading list before writing Stage 9 — covers every method with comparisons of speed, accuracy, and practicality.
+
+---
+
+**THE UTAH GRAPHICS LAB + STYLE3D CONNECTION**
+
+Stable Cosserat Rods and OGC both come from University of Utah under Cem Yuksel and Yin Yang. Yin Yang also co-authored multiple Huamin Wang/Style3D papers. Same research cluster building Style3D's physics engine is also publishing yarn-level and collision breakthroughs at Utah. All code is open source.
+
+Stage 9 recommended stack — all free:
+- Stable Cosserat Rods (YarnBall) — yarn-level fabric behaviour
+- OGC — collision handling
+- Huamin Wang's CPU cloth simulation — server-side without GPU requirement

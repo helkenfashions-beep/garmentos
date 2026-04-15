@@ -134,6 +134,19 @@ Never approximate the crotch curve with a simple arc. Always use bezier.
 - [ ] Sleeve block: crown height = armscye curve / 3, pivot method for sleeve cap construction
 - [ ] Fit type auto-adjustment: slim (4-6cm ease), regular (8-10cm), relaxed (12cm+), oversized (16cm+)
 
+### Basic Block Engine — Skirt
+- [ ] Straight skirt block from waist and hip measurements
+- [ ] A-line skirt block — flared from hip
+- [ ] Dart placement at waist — front and back
+- [ ] Side seam shaping from waist through hip to hem
+- [ ] Hem length as user input
+
+### Basic Block Engine — Dress (Bodice + Skirt combined)
+- [ ] Bodice front and back block — bust dart system
+- [ ] Waist seam joining bodice to skirt
+- [ ] Princess seam variation
+- [ ] Sleeve block attachment point
+
 ### Pattern Tools
 - [ ] Seam allowance generation — user-defined amount added as separate layer
 - [ ] Notches placement
@@ -201,13 +214,15 @@ Never approximate the crotch curve with a simple arc. Always use bezier.
 - **Stage 1** — Canvas foundation (2D drawing surface, points, lines, bezier curves, measurements)
 - **Stage 2** — Split view with live 3D sync (2D canvas left + Three.js mannequin right, real time geometric draping bridge, two-way sync, OrbitControls rotation)
 - **Stage 3** — Block engine — trouser (full Aldrich formula set, bezier crotch curve, generates directly into split view)
-- **Stage 4** — Block engine — shirt (full Aldrich formula set, armscye bezier)
-- **Stage 5** — Pattern tools (seam allowance, notches, grain lines, mirror, dart manipulation, slash and spread)
-- **Stage 6** — Grading (grade rules, automatic size range, East African size increments)
-- **Stage 7** — Technical flats (design illustration layer)
-- **Stage 8** — Tech pack generator (PDF and Excel export)
-- **Stage 9** — Fabric physics (KES/Drape Tester database, on-demand drape simulation)
-- **Stage 10** — GARMENTTRACK bridge (production integration)
+- **Stage 4** — Block engine — shirt (full Aldrich formula set, armscye bezier, sleeve block)
+- **Stage 5** — Block engine — skirt (straight skirt, A-line, waist darts, side seam shaping, hem length input)
+- **Stage 6** — Block engine — dress/bodice (bodice front and back, bust dart system, waist seam, princess seam variation, sleeve attachment)
+- **Stage 7** — Pattern tools (seam allowance, notches, grain lines, mirror, dart manipulation, slash and spread)
+- **Stage 8** — Grading (grade rules, automatic size range, East African size increments)
+- **Stage 9** — Technical flats (design illustration layer)
+- **Stage 10** — Tech pack generator (PDF and Excel export)
+- **Stage 11** — Fabric physics (KES/Drape Tester database, on-demand drape simulation)
+- **Stage 12** — GARMENTTRACK bridge (production integration)
 
 ---
 

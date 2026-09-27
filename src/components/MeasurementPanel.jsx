@@ -91,10 +91,6 @@ export default function MeasurementPanel({ measurements, onChange, onClose, inli
           </div>
         ))}
       </div>
-
-      <div style={{ marginTop: 10, fontSize: 9, color: 'var(--color-text-muted)', borderTop: '1px solid var(--color-border)', paddingTop: 8 }}>
-        European defaults (ISO 8559 size 40). The 3D body and the drape update as you type. East African calibration data slots in here when it arrives.
-      </div>
     </div>
   );
 }

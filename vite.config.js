@@ -4,6 +4,10 @@ import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
+// ARTIFACT=1 builds a single self-contained page (no service worker, one JS
+// chunk) for previewing inside hosts that cannot run service workers.
+const artifact = process.env.ARTIFACT === '1'
+
 export default defineConfig({
   // Relative asset paths so the same build works at a domain root, a
   // sub-folder (GitHub Pages) or from a phone's local server.
@@ -12,7 +16,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     // Installable, fully offline app: every asset is precached on first load.
-    VitePWA({
+    !artifact && VitePWA({
       registerType: 'autoUpdate',
       injectRegister: 'auto',
       includeAssets: ['icons/icon.svg', 'icons/apple-touch-icon.png'],
@@ -43,11 +47,12 @@ export default defineConfig({
     }),
   ],
   build: {
+    outDir: artifact ? 'dist-artifact' : 'dist',
     chunkSizeWarningLimit: 1200,
     rolldownOptions: {
       output: {
         // three.js in its own long-lived chunk: app updates don't re-download it
-        codeSplitting: { groups: [{ name: 'three', test: /node_modules[\\/]three/ }] },
+        codeSplitting: artifact ? false : { groups: [{ name: 'three', test: /node_modules[\\/]three/ }] },
       },
     },
   },

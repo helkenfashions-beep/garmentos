@@ -26,3 +26,4 @@ dist-ssr
 # test output
 test-results
 playwright-report
+dist-artifact

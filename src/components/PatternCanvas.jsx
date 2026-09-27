@@ -20,8 +20,14 @@ import { TOOLS } from './Toolbar';
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const SNAP_RADIUS_SCREEN = 10;
+const SNAP_RADIUS_TOUCH  = 24;   // fingers are wider than cursors
 const POINT_RADIUS       = 5;
 const HIT_RADIUS_SCREEN  = 8;
+const HIT_RADIUS_TOUCH   = 18;
+const TAP_SLOP_PX        = 10;   // a touch that moves less than this is a tap
+// Tools whose action is a single tap: on touch they fire on finger-up, so a
+// two-finger pinch never drops a stray point.
+const TAP_TOOLS = new Set(['point', 'line', 'bezier']);
 const RECT_DRAG_THRESHOLD = 4; // px — minimum drag distance to commit a shape
 
 // ─── History reducer ─────────────────────────────────────────────────────────
@@ -29,6 +35,7 @@ const RECT_DRAG_THRESHOLD = 4; // px — minimum drag distance to commit a shape
 const INITIAL_PATTERN = {
   points:   {},
   segments: {},
+  pieces:   {},      // piece metadata from block generators (see lib/drape)
   selected: new Set(),
 };
 
@@ -115,11 +122,16 @@ function patternReducer(state, action) {
     case 'RESET':
       return { ...INITIAL_PATTERN, selected: new Set() };
 
+    case 'COMMIT_GESTURE':
+      // History marker only — the live gesture already changed `present`
+      return state;
+
     case 'LOAD_BLOCK': {
       // Replace canvas with generated block points and segments
       return {
         points:   action.points,
         segments: action.segments,
+        pieces:   action.pieces ?? {},
         selected: new Set(),
       };
     }
@@ -132,22 +144,31 @@ function patternReducer(state, action) {
 // ─── useHistoryReducer ────────────────────────────────────────────────────────
 
 function useHistoryReducer() {
+  // `gestureBase` is the state before a live drag began. When the drag is
+  // committed, that pre-drag state (not the half-dragged one) goes on the
+  // undo stack — so one undo puts the point back where it started.
   const [history, setHistory] = useState({
     past:    [],
     present: INITIAL_PATTERN,
     future:  [],
+    gestureBase: null,
   });
 
   const dispatch = useCallback((action) => {
-    const NON_HISTORY = new Set(['MOVE_POINT', 'MOVE_CONTROL', 'SET_SELECTED', 'MOVE_MULTI']);
-    if (NON_HISTORY.has(action.type)) {
+    const LIVE = new Set(['MOVE_POINT', 'MOVE_CONTROL', 'MOVE_MULTI']);
+    if (action.type === 'SET_SELECTED') {
       setHistory(h => ({ ...h, present: patternReducer(h.present, action) }));
       return;
     }
+    if (LIVE.has(action.type)) {
+      setHistory(h => ({ ...h, gestureBase: h.gestureBase ?? h.present, present: patternReducer(h.present, action) }));
+      return;
+    }
     setHistory(h => ({
-      past:    [...h.past, h.present],
+      past:    [...h.past, h.gestureBase ?? h.present].slice(-200),
       present: patternReducer(h.present, action),
       future:  [],
+      gestureBase: null,
     }));
   }, []);
 
@@ -155,8 +176,8 @@ function useHistoryReducer() {
     setHistory(h => {
       if (h.past.length === 0) return h;
       const past    = [...h.past];
-      const present = past.pop();
-      return { past, present, future: [h.present, ...h.future] };
+      const present = { ...past.pop(), selected: new Set() };
+      return { past, present, future: [h.present, ...h.future], gestureBase: null };
     });
   }, []);
 
@@ -165,7 +186,7 @@ function useHistoryReducer() {
       if (h.future.length === 0) return h;
       const future  = [...h.future];
       const present = future.shift();
-      return { past: [...h.past, h.present], present, future };
+      return { past: [...h.past, h.present], present, future, gestureBase: null };
     });
   }, []);
 
@@ -178,10 +199,32 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
   const svgRef = useRef(null);
   const { state, dispatch, undo, redo, canUndo, canRedo } = useHistoryReducer();
 
+  const fitPendingRef = useRef(false);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
   useImperativeHandle(ref, () => ({
     undo, redo, canUndo, canRedo,
-    loadBlock: (points, segments) => dispatch({ type: 'LOAD_BLOCK', points, segments }),
+    loadBlock: (points, segments, pieces) => {
+      fitPendingRef.current = true;
+      dispatch({ type: 'LOAD_BLOCK', points, segments, pieces });
+    },
+    loadPattern: (p) => {
+      fitPendingRef.current = true;
+      dispatch({ type: 'LOAD_BLOCK', points: p.points ?? {}, segments: p.segments ?? {}, pieces: p.pieces ?? {} });
+    },
+    getPattern: () => {
+      const { points, segments, pieces } = stateRef.current;
+      return { points, segments, pieces };
+    },
     clearCanvas: () => dispatch({ type: 'RESET' }),
+    fitView: () => fitView(),
+    /** Called by the 3D view while a seam point is dragged on the body. */
+    movePoint: (id, x, y, commit) => {
+      if (!stateRef.current.points[id]) return;
+      dispatch({ type: commit ? 'COMMIT_MOVE' : 'MOVE_POINT', id, x, y });
+    },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [undo, redo, canUndo, canRedo, dispatch]);
 
   useEffect(() => {
@@ -193,7 +236,7 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
   useEffect(() => { onPatternChangeRef.current = onPatternChange; }, [onPatternChange]);
   useEffect(() => {
     const timer = setTimeout(() => {
-      onPatternChangeRef.current?.({ points: state.points, segments: state.segments });
+      onPatternChangeRef.current?.({ points: state.points, segments: state.segments, pieces: state.pieces });
     }, 80);
     return () => clearTimeout(timer);
   }, [state]);
@@ -253,6 +296,34 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
     return () => ro.disconnect();
   }, []);
 
+  // ── Fit the whole pattern into view ──────────────────────────────────────
+  function fitView(pts = stateRef.current.points) {
+    const arr = Object.values(pts);
+    const svg = svgRef.current;
+    if (!svg) return;
+    const w = svg.clientWidth || svgSize.w, h = svg.clientHeight || svgSize.h;
+    if (!arr.length) { setViewport({ x: -10, y: -10, scale: 2.0 }); return; }
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of arr) {
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    }
+    const pad = 24;
+    const scale = Math.max(0.05, Math.min(20, Math.min((w - pad * 2) / ((maxX - minX) || 1), (h - pad * 2) / ((maxY - minY) || 1))));
+    setViewport({
+      scale,
+      x: (minX + maxX) / 2 - w / 2 / scale,
+      y: (minY + maxY) / 2 - h / 2 / scale,
+    });
+  }
+
+  useEffect(() => {
+    if (!fitPendingRef.current) return;
+    fitPendingRef.current = false;
+    fitView(state.points);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.points]);
+
   // ── Wheel zoom — non-passive ─────────────────────────────────────────────
   useEffect(() => {
     const svg = svgRef.current;
@@ -263,7 +334,7 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
       const mx    = (e.clientX - rect.left) / viewport.scale + viewport.x;
       const my    = (e.clientY - rect.top)  / viewport.scale + viewport.y;
       const f     = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-      const scale = Math.max(0.2, Math.min(20, viewport.scale * f));
+      const scale = Math.max(0.05, Math.min(20, viewport.scale * f));
       setViewport({ scale, x: mx - (e.clientX - rect.left) / scale, y: my - (e.clientY - rect.top) / scale });
     }
     svg.addEventListener('wheel', onWheel, { passive: false });
@@ -288,8 +359,9 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const getSvgRect   = () => svgRef.current?.getBoundingClientRect() ?? { left: 0, top: 0, width: 0, height: 0 };
-  const snapRadiusMm = () => SNAP_RADIUS_SCREEN / viewport.scale;
-  const hitRadiusMm  = () => HIT_RADIUS_SCREEN  / viewport.scale;
+  const isTouchRef   = useRef(false);
+  const snapRadiusMm = () => (isTouchRef.current ? SNAP_RADIUS_TOUCH : SNAP_RADIUS_SCREEN) / viewport.scale;
+  const hitRadiusMm  = () => (isTouchRef.current ? HIT_RADIUS_TOUCH  : HIT_RADIUS_SCREEN)  / viewport.scale;
   const toCanvas     = (sx, sy) => screenToCanvas(sx, sy, getSvgRect(), viewport);
 
   // ── Shape creation ────────────────────────────────────────────────────────
@@ -334,12 +406,12 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
     });
   }
 
-  // ── Mouse move ────────────────────────────────────────────────────────────
-  function onMouseMove(e) {
+  // ── Pointer move (mouse, pen, single finger) ─────────────────────────────
+  function handleMove(e) {
     const pt = toCanvas(e.clientX, e.clientY);
     setCursor(pt);
     onCursorMove?.(pt);
-    const snap = findSnap(pt, state.points, snapRadiusMm());
+    const snap = findSnap(pt, snapPoints, snapRadiusMm());
     setSnapTarget(snap.snapped ? snap : null);
 
     // Shape drag preview (rect or circle)
@@ -360,7 +432,7 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
       return;
     }
     if (ds.type === 'point') {
-      const s2  = findSnap(pt, state.points, snapRadiusMm());
+      const s2  = findSnap(pt, snapPoints, snapRadiusMm());
       const fin = s2.snapped && s2.id !== ds.pointId ? s2.point : pt;
       dispatch({ type: 'MOVE_POINT', id: ds.pointId, x: fin.x, y: fin.y });
       return;
@@ -388,10 +460,10 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
     }
   }
 
-  // ── Mouse down ────────────────────────────────────────────────────────────
-  function onMouseDown(e) {
+  // ── Pointer down ──────────────────────────────────────────────────────────
+  function handleDown(e) {
     const pt      = toCanvas(e.clientX, e.clientY);
-    const snap    = findSnap(pt, state.points, snapRadiusMm());
+    const snap    = findSnap(pt, snapPoints, snapRadiusMm());
     const finalPt = snap.snapped ? snap.point : pt;
 
     // ── Right-click drag ────────────────────────────────────────────────────
@@ -481,6 +553,12 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
           return;
         }
       }
+      // Touch on empty space pans (one finger) — the phone equivalent of
+      // middle-drag. A tap without movement still deselects (see handleUp).
+      if (isTouchRef.current) {
+        dragState.current = { type: 'pan', touchDeselect: true, startScreen: { x: e.clientX, y: e.clientY }, startViewport: { x: viewport.x, y: viewport.y } };
+        return;
+      }
       // Clicked empty space — start a left-drag marquee.
       // Decide on mouseUp: if dragged → box select, if short click → deselect.
       shapeDragRef.current = { tool: 'marquee', start: pt };
@@ -533,8 +611,8 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
     }
   }
 
-  // ── Mouse up ─────────────────────────────────────────────────────────────
-  function onMouseUp(e) {
+  // ── Pointer up ────────────────────────────────────────────────────────────
+  function handleUp(e) {
     // Commit shape drags
     if (shapeDragRef.current) {
       const { tool, start } = shapeDragRef.current;
@@ -548,7 +626,7 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
             const minX = Math.min(start.x, end.x), maxX = Math.max(start.x, end.x);
             const minY = Math.min(start.y, end.y), maxY = Math.max(start.y, end.y);
             const inside = Object.values(state.points)
-              .filter(p => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY)
+              .filter(p => !guideOnlyPoints.has(p.id) && p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY)
               .map(p => p.id);
             if (inside.length > 0) {
               selectionSourceRef.current = 'marquee';
@@ -566,7 +644,7 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
             const minX = Math.min(start.x, end.x), maxX = Math.max(start.x, end.x);
             const minY = Math.min(start.y, end.y), maxY = Math.max(start.y, end.y);
             const inside = Object.values(state.points)
-              .filter(p => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY)
+              .filter(p => !guideOnlyPoints.has(p.id) && p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY)
               .map(p => p.id);
             selectionSourceRef.current = inside.length > 0 ? 'marquee' : 'clear';
             dispatch({ type: 'SET_SELECTED', ids: inside });
@@ -588,6 +666,11 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
     // Commit point/multi drag to history
     const ds = dragState.current;
     dragState.current = null;
+    if (ds?.type === 'pan' && ds.touchDeselect) {
+      const moved = Math.hypot(e.clientX - ds.startScreen.x, e.clientY - ds.startScreen.y);
+      if (moved < TAP_SLOP_PX) { selectionSourceRef.current = 'clear'; dispatch({ type: 'SET_SELECTED', ids: [] }); }
+    }
+    if (ds?.type === 'control') dispatch({ type: 'COMMIT_GESTURE' });
     if (ds?.type === 'point') {
       const pt = state.points[ds.pointId];
       if (pt) dispatch({ type: 'COMMIT_MOVE', id: ds.pointId, x: pt.x, y: pt.y });
@@ -610,6 +693,102 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
       }
       dispatch({ type: 'COMMIT_MULTI', positions, controlPositions });
     }
+  }
+
+  // ── Pointer routing: pinch-zoom, tap tools, then the single-pointer logic ──
+  const pointersRef = useRef(new Map());   // pointerId → {x, y}
+  const pinchRef    = useRef(null);
+  const tapRef      = useRef(null);
+
+  function endSinglePointerGesture() {
+    // A second finger landed: drop whatever the first finger started
+    if (shapeDragRef.current) { shapeDragRef.current = null; setShapeDrag(null); }
+    const ds = dragState.current;
+    dragState.current = null;
+    if (ds && ds.type !== 'pan') dispatch({ type: 'COMMIT_GESTURE' });
+    tapRef.current = null;
+  }
+
+  function onPointerDown(e) {
+    isTouchRef.current = e.pointerType === 'touch' || e.pointerType === 'pen';
+    if (e.pointerType !== 'mouse') svgRef.current?.setPointerCapture?.(e.pointerId);
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointersRef.current.size === 2) {
+      endSinglePointerGesture();
+      const [a, b] = [...pointersRef.current.values()];
+      const rect = getSvgRect();
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      pinchRef.current = {
+        d0: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+        vp0: viewport,
+        anchor: { x: (mid.x - rect.left) / viewport.scale + viewport.x, y: (mid.y - rect.top) / viewport.scale + viewport.y },
+      };
+      return;
+    }
+    if (pointersRef.current.size > 2 || pinchRef.current) return;
+
+    if (e.pointerType !== 'mouse' && TAP_TOOLS.has(activeTool) && e.button === 0) {
+      tapRef.current = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
+      const pt = toCanvas(e.clientX, e.clientY);
+      setCursor(pt);
+      onCursorMove?.(pt);
+      return;
+    }
+    handleDown(e);
+  }
+
+  function onPointerMove(e) {
+    if (pointersRef.current.has(e.pointerId)) pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const pinch = pinchRef.current;
+    if (pinch) {
+      if (pointersRef.current.size < 2) return;
+      const [a, b] = [...pointersRef.current.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      const rect = getSvgRect();
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const scale = Math.max(0.05, Math.min(20, pinch.vp0.scale * d / pinch.d0));
+      setViewport({
+        scale,
+        x: pinch.anchor.x - (mid.x - rect.left) / scale,
+        y: pinch.anchor.y - (mid.y - rect.top) / scale,
+      });
+      return;
+    }
+    if (tapRef.current) {
+      const t = tapRef.current;
+      if (Math.hypot(e.clientX - t.x, e.clientY - t.y) > TAP_SLOP_PX) {
+        // turned into a drag: pan the canvas instead of placing anything
+        tapRef.current = null;
+        dragState.current = { type: 'pan', startScreen: { x: t.x, y: t.y }, startViewport: { x: viewport.x, y: viewport.y } };
+      } else {
+        return;
+      }
+    }
+    handleMove(e);
+  }
+
+  function onPointerUp(e) {
+    pointersRef.current.delete(e.pointerId);
+    if (pinchRef.current) {
+      if (pointersRef.current.size === 0) pinchRef.current = null;
+      return;
+    }
+    const t = tapRef.current;
+    if (t && t.pointerId === e.pointerId) {
+      tapRef.current = null;
+      // treat as a click at the finger position (snap uses the touch radius)
+      handleDown({ clientX: e.clientX, clientY: e.clientY, button: 0, altKey: false, preventDefault() {} });
+      return;
+    }
+    handleUp(e);
+  }
+
+  function onPointerCancel(e) {
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size === 0) pinchRef.current = null;
+    tapRef.current = null;
+    if (dragState.current || shapeDragRef.current) handleUp(e);
   }
 
   // ── Context menu ─────────────────────────────────────────────────────────
@@ -656,6 +835,24 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
       const p2 = state.points[seg.p2];
       if (!p1 || !p2) return null;
       const selected = selIds.has(seg.p1) && selIds.has(seg.p2);
+
+      // Grainline: solid, arrowheads at both ends
+      if (seg.grain) {
+        const ah = 10 / viewport.scale, aw = 5 / viewport.scale;
+        const dx = p2.x - p1.x, dy = p2.y - p1.y, l = Math.hypot(dx, dy) || 1;
+        const ux = dx / l, uy = dy / l;
+        const head = (tip, dir) => `M${tip.x},${tip.y} L${tip.x - dir * ux * ah - uy * aw},${tip.y - dir * uy * ah + ux * aw} L${tip.x - dir * ux * ah + uy * aw},${tip.y - dir * uy * ah - ux * aw} Z`;
+        return (
+          <g key={seg.id} data-grain="1" style={{ pointerEvents: 'none' }}>
+            <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke="#8b949e" strokeWidth={sw} />
+            <path d={head(p2, 1)} fill="#8b949e" />
+            <path d={head(p1, -1)} fill="#8b949e" />
+            <text x={p1.x + 5 / viewport.scale} y={(p1.y + p2.y) / 2} fontSize={9 / viewport.scale} fill="#8b949e"
+              fontFamily="var(--font-mono)" transform={`rotate(90 ${p1.x + 5 / viewport.scale} ${(p1.y + p2.y) / 2})`}
+              style={{ userSelect: 'none' }}>GRAIN</text>
+          </g>
+        );
+      }
 
       // Construction lines: dashed blue-grey guide lines
       if (seg.construction) {
@@ -798,10 +995,28 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
   }
 
   // ── Points ────────────────────────────────────────────────────────────────
+  // Points that only anchor construction guides are not drawn — they would
+  // clutter the block with dots that aren't part of any pattern piece.
+  const guideOnlyPoints = useMemo(() => {
+    const used = new Set(), guide = new Set();
+    for (const sg of Object.values(state.segments)) {
+      const bucket = sg.construction ? guide : used;
+      bucket.add(sg.p1); bucket.add(sg.p2);
+    }
+    for (const id of used) guide.delete(id);
+    return guide;
+  }, [state.segments]);
+  const snapPoints = useMemo(() => {
+    if (!guideOnlyPoints.size) return state.points;
+    const out = {};
+    for (const [id, p] of Object.entries(state.points)) if (!guideOnlyPoints.has(id)) out[id] = p;
+    return out;
+  }, [state.points, guideOnlyPoints]);
+
   function renderPoints() {
     const r  = POINT_RADIUS / viewport.scale;
     const sw = 1.5 / viewport.scale;
-    return Object.values(state.points).map(pt => (
+    return Object.values(state.points).filter(pt => !guideOnlyPoints.has(pt.id)).map(pt => (
       <circle key={pt.id} cx={pt.x} cy={pt.y} r={r}
         fill={state.selected.has(pt.id) ? 'var(--color-point-sel)' : 'var(--color-point)'}
         stroke="var(--color-canvas)" strokeWidth={sw}
@@ -858,17 +1073,39 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
     };
   }, [selectedSeg, state.points, viewport]);
 
+  // Automation hook (end-to-end tests): canvas mm → client px
+  useEffect(() => {
+    window.__garmentos2d = {
+      toScreen(x, y) {
+        const r = getSvgRect();
+        return { x: r.left + (x - viewport.x) * viewport.scale, y: r.top + (y - viewport.y) * viewport.scale };
+      },
+      pattern() { return stateRef.current; },
+    };
+    return () => { delete window.__garmentos2d; };
+  });
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <svg
         ref={svgRef}
         viewBox={viewBox}
-        style={{ width: '100%', height: '100%', display: 'block', backgroundColor: 'var(--color-canvas)', cursor: cursorStyle, userSelect: 'none' }}
-        onMouseMove={onMouseMove}
-        onMouseDown={onMouseDown}
-        onMouseUp={onMouseUp}
-        onMouseLeave={() => { dragState.current = null; shapeDragRef.current = null; setShapeDrag(null); }}
+        data-testid="pattern-canvas"
+        data-scale={viewport.scale.toFixed(4)}
+        data-vx={viewport.x.toFixed(2)}
+        data-vy={viewport.y.toFixed(2)}
+        style={{ width: '100%', height: '100%', display: 'block', backgroundColor: 'var(--color-canvas)', cursor: cursorStyle, userSelect: 'none', touchAction: 'none', WebkitUserSelect: 'none' }}
+        onPointerMove={onPointerMove}
+        onPointerDown={onPointerDown}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
+        onPointerLeave={(e) => {
+          if (e.pointerType !== 'mouse') return;
+          const ds = dragState.current;
+          dragState.current = null; shapeDragRef.current = null; setShapeDrag(null);
+          if (ds && ds.type !== 'pan') dispatch({ type: 'COMMIT_GESTURE' });
+        }}
         onContextMenu={onContextMenu}
       >
         {renderGrid()}

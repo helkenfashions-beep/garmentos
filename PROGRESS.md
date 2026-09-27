@@ -1,6 +1,6 @@
 # GarmentOS — Build Progress
 
-## Current Stage: Stage 2 Complete
+## Current Stage: Stage 3b Complete (live drape, two-way sync, Android offline app)
 
 ---
 
@@ -155,6 +155,60 @@ Date: April 15 2026
 
 ### What Stage 4 will build on top of this:
 Shirt block engine — full Aldrich formula set: back panel, front panel, armscye bezier, button placket, sleeve block. Arm posing controls added to the 3D mannequin for sleeve fit checking.
+
+## Stage 3b — Live Drape, Two-Way Sync, Android (offline app)
+Status: COMPLETE
+Date: September 27 2026
+Branch: mobile-split-view
+
+### What was built:
+
+**Geometric drape engine** (`src/lib/drape/`) — pattern pieces now wrap onto the body instead of floating in front of it.
+- `pieces.js` — finds fabric pieces: block panels tagged `seg.piece` (+ `seg.dart` for dart legs) and any hand-drawn closed loop. Construction lines and grainlines are never fabric.
+- `drape.js` — each pattern row maps to one body height (1 mm paper = 1 mm body). Front + back panels share the circumference at every height, so side seams and inseams meet. Above the hip the panels wrap half the torso (CF→side→CB); below the crotch they wrap one leg tube; the hand-over between them is where the crotch curve lives, and along the crotch edge it completes exactly at the rise line so front and back forks meet.
+- Darts are closed geometrically (the wedge is removed from the row before wrapping) — like sewing them.
+- Body collision: fabric can never sit inside the body. Torso push keeps x near CF/CB (so left and right crotch seams stay on the centre line); the two legs are treated as one union where the thighs overlap.
+- Both legs are drawn (mirror). Seam lines and dart legs drawn on the fabric.
+- `solvePatternPoint()` — Gauss–Newton inverse of the drape map: turns a 3D drag into a 2D pattern move.
+- Drape of a full trouser block ≈ 5–15 ms in Node, 60–95 ms in software-rendered headless Chrome.
+
+**Shared body dims** (`src/lib/body/dims.js`) — the mannequin and the drape engine use the same measurements, lathe profiles and radius lookups.
+
+**Two-way sync**
+- 2D → 3D: automatic on every edit (80 ms debounce), no button.
+- 3D → 2D: orange seam points on the draped garment are draggable (mouse or finger, 30 px touch radius, occlusion-checked). One undo reverts the whole drag.
+- Undo fix: a drag used to push the already-moved state onto the undo stack, so undo did nothing. History now records the pre-gesture state (`gestureBase`).
+
+**French-curve trouser seams** (from Benson's drafting notes)
+- Outseam hip → knee is an S-curve that flips from the outer to the inner curve at the flip point: `flipY = hip line + (hip to knee length) / 2`. Tangent-continuous through the flip.
+- Inseam fork → knee is a French curve hollowed 1 cm toward the crease.
+- Knee → hem ruled straight on both seams.
+- Grainline on each panel's crease (arrowed, not fabric).
+
+**Phone / Android**
+- Pointer events everywhere: one-finger pan on empty canvas, two-finger pinch zoom, tap tools (point/line/bezier) fire on finger-up so a pinch never drops a stray point, bigger snap/hit radius for fingers.
+- Phone layout (width < 760 or height < 520): portrait stacks 2D above 3D with a finger-draggable divider; landscape sits side by side; bottom toolbar; menu sheet holds pattern name, New/Open/Save, block + fit, fabric colour, body type, measurements.
+- Fit-to-view tool (F), auto-fit after generate/open.
+- Fixed a layout bug (also on desktop): split percentages were of the whole row including toolbar + block panel, pushing the 3D view off-screen.
+- 3D camera frames the whole body for any panel shape; depth precision fixed (near plane 50 mm, fabric biased toward camera) so the body no longer shows through the fabric.
+- 3D-only mode keeps the canvas mounted — switching views never loses work.
+
+**Offline + files**
+- Installable PWA (manifest, icons incl. maskable, Workbox precache of all app assets ≈ 840 KB). Works with no network after first visit.
+- Autosave to the device on every change; restored on reopen.
+- Save/Open `.garmentos.json` files (`src/lib/storage/patternFile.js`) — pattern, piece metadata, measurements, body type, name. Bad files give a clear message and change nothing.
+- Fabric colour swatches (incl. kitenge red), extra measurement fields: upper thigh, knee.
+
+### Tests (every feature run 3× before shipping)
+- `npm run test:x3` — 56 unit tests (drape geometry, seams meeting, dart closing, no body penetration, crotch closure, length preservation, inverse solve, French-curve seams, files).
+- `npm run e2e:x3` — Playwright on emulated Pixel 7 portrait, Pixel 7 landscape and desktop: live sync both ways with real touch events, undo, pinch, pan, tap tools, finger-drawn pieces draping, divider, menu, install/offline, autosave, save/open. Final run: 60/60, 60/60, 33/33 (touch-only specs skipped on desktop).
+- In environments without Playwright's own Chromium, set `PW_CHROMIUM=/path/to/chromium`.
+
+### Known limitations
+- Drape is geometric, not physics: no gravity folds/wrinkles; on-demand fabric physics is still Stage 11.
+- Only trouser panels have placement rules; hand-drawn pieces wrap the torso front as a generic piece.
+- A faint centre line shows below the crotch where the two inner-leg faces meet.
+- Moving a construction guide does not move its level in the drape (drape levels come from piece metadata).
 
 ## Stage 4 — Shirt Block Engine
 Status: NOT STARTED

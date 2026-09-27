@@ -9,9 +9,11 @@ const FIELDS = [
   { key: 'bodyRise',       label: 'Body Rise',        note: 'waist to seat (sitting)' },
   { key: 'shoulderWidth',  label: 'Shoulder Width',   note: 'shoulder to shoulder' },
   { key: 'backWaistLength',label: 'Back Waist Length', note: 'neck to waist, back' },
+  { key: 'upperThighGirth',label: 'Upper Thigh',      note: 'drives the crotch fork' },
+  { key: 'kneeGirth',      label: 'Knee',             note: 'around the knee' },
 ];
 
-export default function MeasurementPanel({ measurements, onChange, onClose }) {
+export default function MeasurementPanel({ measurements, onChange, onClose, inline = false }) {
   const [localValues, setLocalValues] = useState(() => {
     const out = {};
     FIELDS.forEach(f => { out[f.key] = (measurements[f.key] / 10).toFixed(1); });
@@ -27,9 +29,13 @@ export default function MeasurementPanel({ measurements, onChange, onClose }) {
   }
 
   return (
-    <div style={{
+    <div data-testid="measurements" style={inline ? {
+      padding: '4px 0',
+    } : {
       position: 'absolute',
       top: 8, left: 8, right: 8,
+      maxHeight: 'calc(100% - 60px)',
+      overflowY: 'auto',
       backgroundColor: 'var(--color-panel)',
       border: '1px solid var(--color-border)',
       borderRadius: 8,
@@ -46,10 +52,10 @@ export default function MeasurementPanel({ measurements, onChange, onClose }) {
           Measurements
         </span>
         <span style={{ fontSize: 9, color: 'var(--color-text-muted)' }}>cm</span>
-        <button onClick={onClose} style={{
+        {!inline && <button onClick={onClose} style={{
           background: 'none', border: 'none', cursor: 'pointer',
           color: 'var(--color-text-dim)', fontSize: 14, lineHeight: 1, padding: '0 2px',
-        }}>×</button>
+        }}>×</button>}
       </div>
 
       {/* Input grid */}
@@ -57,23 +63,26 @@ export default function MeasurementPanel({ measurements, onChange, onClose }) {
         {FIELDS.map(({ key, label, note }) => (
           <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 10, color: 'var(--color-text)', lineHeight: 1.2 }}>{label}</div>
-              <div style={{ fontSize: 9, color: 'var(--color-text-muted)' }}>{note}</div>
+              <div style={{ fontSize: inline ? 13 : 10, color: 'var(--color-text)', lineHeight: 1.2 }}>{label}</div>
+              <div style={{ fontSize: inline ? 11 : 9, color: 'var(--color-text-dim)' }}>{note}</div>
             </div>
             <input
               type="number"
+              inputMode="decimal"
+              aria-label={label}
+              data-testid={`m-${key}`}
               value={localValues[key]}
               onChange={e => handleChange(key, e.target.value)}
               min={1}
               step={0.5}
               style={{
-                width: 54,
-                padding: '3px 6px',
+                width: inline ? 76 : 54,
+                padding: inline ? '8px 8px' : '3px 6px',
+                fontSize: inline ? 16 : 11,
                 backgroundColor: 'var(--color-surface)',
                 border: '1px solid var(--color-border)',
                 borderRadius: 4,
                 color: 'var(--color-text)',
-                fontSize: 11,
                 fontFamily: 'var(--font-mono)',
                 textAlign: 'right',
                 outline: 'none',
@@ -84,7 +93,7 @@ export default function MeasurementPanel({ measurements, onChange, onClose }) {
       </div>
 
       <div style={{ marginTop: 10, fontSize: 9, color: 'var(--color-text-muted)', borderTop: '1px solid var(--color-border)', paddingTop: 8 }}>
-        European defaults (ISO 8559 size 40). East African calibration layer coming in Stage 3.
+        European defaults (ISO 8559 size 40). The 3D body and the drape update as you type. East African calibration data slots in here when it arrives.
       </div>
     </div>
   );

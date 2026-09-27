@@ -4,10 +4,66 @@ import PatternCanvas from './components/PatternCanvas';
 import MannequinViewer from './components/MannequinViewer';
 import MeasurementPanel from './components/MeasurementPanel';
 import BlockPanel from './components/BlockPanel';
+import MenuSheet from './components/MenuSheet';
+import { BODY_TYPES } from './lib/options';
 import { useMeasurements } from './hooks/useMeasurements';
 import { generateTrouserBlock } from './lib/blocks/trouserBlock';
+import {
+  autosave, loadAutosave, clearAutosave, downloadPattern, readPatternFile,
+} from './lib/storage/patternFile';
+
+// ─── Screen size ──────────────────────────────────────────────────────────────
+function useScreen() {
+  const get = () => ({ w: window.innerWidth, h: window.innerHeight });
+  const [s, setS] = useState(get);
+  useEffect(() => {
+    const on = () => setS(get());
+    window.addEventListener('resize', on);
+    window.addEventListener('orientationchange', on);
+    return () => { window.removeEventListener('resize', on); window.removeEventListener('orientationchange', on); };
+  }, []);
+  return s;
+}
+
+// ─── Install prompt (Android Chrome "Add to home screen") ────────────────────
+function useInstallPrompt() {
+  const [evt, setEvt] = useState(null);
+  useEffect(() => {
+    const on = (e) => { e.preventDefault(); setEvt(e); };
+    window.addEventListener('beforeinstallprompt', on);
+    const done = () => setEvt(null);
+    window.addEventListener('appinstalled', done);
+    return () => { window.removeEventListener('beforeinstallprompt', on); window.removeEventListener('appinstalled', done); };
+  }, []);
+  const install = useCallback(async () => {
+    if (!evt) return;
+    evt.prompt();
+    await evt.userChoice.catch(() => null);
+    setEvt(null);
+  }, [evt]);
+  return { canInstall: !!evt, install };
+}
+
+const TOOL_LABELS = {
+  [TOOLS.SELECT]: 'Select',
+  [TOOLS.POINT]:  'Place Point',
+  [TOOLS.LINE]:   'Draw Line',
+  [TOOLS.BEZIER]: 'Draw Bezier',
+  [TOOLS.RECT]:   'Draw Rectangle',
+  [TOOLS.CIRCLE]: 'Draw Circle',
+};
 
 export default function App() {
+  const screen  = useScreen();
+  // Phone UI (menu sheet, bottom toolbar, no side panels) for narrow screens
+  // AND for phones held sideways. Portrait phones stack 2D above 3D.
+  const isPhone = screen.w < 760 || screen.h < 520;
+  const stacked = isPhone && screen.h > screen.w;
+  const compact = isPhone;
+
+  // ── Restore last session from this device ─────────────────────────────────
+  const [restored] = useState(() => loadAutosave());
+
   // ── Canvas state ──────────────────────────────────────────────────────────
   const [activeTool, setActiveTool] = useState(TOOLS.SELECT);
   const [showGrid,   setShowGrid]   = useState(true);
@@ -15,70 +71,134 @@ export default function App() {
   const [histState,  setHistState]  = useState({ canUndo: false, canRedo: false });
   const canvasRef = useRef(null);
 
-  // ── Measurements & 3D sync ────────────────────────────────────────────────
-  const { measurements, updateMeasurement } = useMeasurements();
+  // ── Measurements, body, fabric ────────────────────────────────────────────
+  const { measurements, updateMeasurement, replaceMeasurements } = useMeasurements(restored?.measurements);
+  const [measurementsKey, setMeasurementsKey] = useState(0);
+  const [bodyType, setBodyType] = useState(restored?.bodyType ?? 'male_adult');
+  const [fabricColor, setFabricColor] = useState(null);
+  const [patternName, setPatternName] = useState(restored?.name ?? 'Untitled pattern');
   const [patternState, setPatternState] = useState(null);
   const handlePatternChange = useCallback((ps) => setPatternState(ps), []);
-  const [bodyType, setBodyType] = useState('male_adult');
 
   // ── Layout ────────────────────────────────────────────────────────────────
-  // viewMode: 'split' | '2d' | '3d'
-  const [viewMode,          setViewMode]          = useState('split');
-  const [splitRatio,        setSplitRatio]        = useState(60);   // % for canvas panel
-  const [showMeasurements,  setShowMeasurements]  = useState(false);
+  const [viewMode,         setViewMode]         = useState('split');  // 'split' | '2d' | '3d'
+  const [splitRatio,       setSplitRatio]       = useState(stacked ? 52 : 60);
+  const [showMeasurements, setShowMeasurements] = useState(false);
+  const [menuOpen,         setMenuOpen]         = useState(false);
+  const [toast,            setToast]            = useState(null);
+  const { canInstall, install } = useInstallPrompt();
 
-  // Divider drag
-  const dividerDragging = useRef(false);
-  const dividerStartX   = useRef(0);
-  const dividerStartRatio = useRef(60);
-  const workspaceRef    = useRef(null);
+  const workspaceRef = useRef(null);
+  const fileInputRef = useRef(null);
 
-  useEffect(() => {
-    function onMove(e) {
-      if (!dividerDragging.current) return;
-      const container = workspaceRef.current;
-      if (!container) return;
-      const containerW = container.clientWidth;
-      const dx    = e.clientX - dividerStartX.current;
-      const delta = (dx / containerW) * 100;
-      setSplitRatio(Math.max(20, Math.min(80, dividerStartRatio.current + delta)));
-    }
-    function onUp() { dividerDragging.current = false; }
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
+  const toastTimer = useRef(0);
+  const say = useCallback((msg) => {
+    setToast(msg);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2600);
   }, []);
 
-  function onDividerMouseDown(e) {
+  // ── Restore pattern into the canvas once it has mounted ───────────────────
+  const restoreDone = useRef(false);
+  useEffect(() => {
+    if (restoreDone.current) return;
+    restoreDone.current = true;
+    if (restored?.pattern && Object.keys(restored.pattern.points).length) {
+      canvasRef.current?.loadPattern(restored.pattern);
+    }
+  }, [restored]);
+
+  // ── Autosave on every change (pattern emits debounced) ────────────────────
+  useEffect(() => {
+    if (!patternState) return;
+    autosave({ pattern: patternState, measurements, bodyType, name: patternName });
+  }, [patternState, measurements, bodyType, patternName]);
+
+  // ── Split divider (mouse + touch) ─────────────────────────────────────────
+  const dividerRef = useRef(null);
+  function onDividerPointerDown(e) {
     e.preventDefault();
-    dividerDragging.current   = true;
-    dividerStartX.current     = e.clientX;
-    dividerStartRatio.current = splitRatio;
+    const el = e.currentTarget;
+    el.setPointerCapture?.(e.pointerId);
+    dividerRef.current = { id: e.pointerId, x: e.clientX, y: e.clientY, ratio: splitRatio };
+  }
+  function onDividerPointerMove(e) {
+    const d = dividerRef.current;
+    if (!d || d.id !== e.pointerId) return;
+    const box = workspaceRef.current?.getBoundingClientRect();
+    if (!box) return;
+    const delta = stacked ? (e.clientY - d.y) / box.height * 100 : (e.clientX - d.x) / box.width * 100;
+    setSplitRatio(Math.max(20, Math.min(80, d.ratio + delta)));
+  }
+  function onDividerPointerUp(e) {
+    if (dividerRef.current?.id === e.pointerId) dividerRef.current = null;
   }
 
   // ── Toolbar actions ───────────────────────────────────────────────────────
   const handleToolChange = useCallback((tool) => setActiveTool(tool), []);
-  const handleToggleGrid  = useCallback(() => setShowGrid(v => !v), []);
-  const handleUndo        = useCallback(() => canvasRef.current?.undo?.(), []);
-  const handleRedo        = useCallback(() => canvasRef.current?.redo?.(), []);
+  const handleToggleGrid = useCallback(() => setShowGrid(v => !v), []);
+  const handleUndo       = useCallback(() => canvasRef.current?.undo?.(), []);
+  const handleRedo       = useCallback(() => canvasRef.current?.redo?.(), []);
+  const handleFit        = useCallback(() => canvasRef.current?.fitView?.(), []);
 
   // ── Block generation ──────────────────────────────────────────────────────
   const handleGenerate = useCallback((blockType, garmentType) => {
     if (blockType === 'trouser') {
-      const { points, segments } = generateTrouserBlock(measurements, garmentType);
-      canvasRef.current?.loadBlock(points, segments);
+      const { points, segments, pieces } = generateTrouserBlock(measurements, garmentType);
+      canvasRef.current?.loadBlock(points, segments, pieces);
+      setMenuOpen(false);
+      say('Trouser block generated');
     }
-  }, [measurements]);
+  }, [measurements, say]);
   const handleClearCanvas = useCallback(() => canvasRef.current?.clearCanvas?.(), []);
+
+  // ── 3D → 2D: seam point dragged on the body ───────────────────────────────
+  const handleHandleDrag = useCallback((pointId, x, y, commit) => {
+    canvasRef.current?.movePoint(pointId, x, y, commit);
+  }, []);
+
+  // ── Files ─────────────────────────────────────────────────────────────────
+  const handleSave = useCallback(() => {
+    const pattern = canvasRef.current?.getPattern();
+    downloadPattern({ pattern, measurements, bodyType, name: patternName });
+    say('Saved to your downloads');
+  }, [measurements, bodyType, patternName, say]);
+
+  const handleOpen = useCallback(() => fileInputRef.current?.click(), []);
+
+  const onFilePicked = useCallback(async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const data = await readPatternFile(file);
+      if (data.measurements) { replaceMeasurements(data.measurements); setMeasurementsKey(k => k + 1); }
+      if (data.bodyType) setBodyType(data.bodyType);
+      setPatternName(data.name);
+      canvasRef.current?.loadPattern(data.pattern);
+      setMenuOpen(false);
+      say(`Opened “${data.name}”`);
+    } catch (err) {
+      say(err.message || 'Could not open that file');
+    }
+  }, [replaceMeasurements, say]);
+
+  const handleNew = useCallback(() => {
+    canvasRef.current?.clearCanvas();
+    setPatternName('Untitled pattern');
+    clearAutosave();
+    setMenuOpen(false);
+  }, []);
+
+  const handleMeasurementChange = useCallback((k, v) => updateMeasurement(k, v), [updateMeasurement]);
 
   // ── Global keyboard shortcuts ─────────────────────────────────────────────
   useEffect(() => {
     function onKey(e) {
       const tag = document.activeElement?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); handleSave(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); handleOpen(); return; }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       switch (e.key.toLowerCase()) {
         case 's': setActiveTool(TOOLS.SELECT); break;
@@ -88,259 +208,292 @@ export default function App() {
         case 'r': setActiveTool(TOOLS.RECT);   break;
         case 'c': setActiveTool(TOOLS.CIRCLE); break;
         case 'g': setShowGrid(v => !v);        break;
+        case 'f': handleFit();                 break;
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [handleSave, handleOpen, handleFit]);
 
-  const TOOL_LABELS = {
-    [TOOLS.SELECT]: 'Select',
-    [TOOLS.POINT]:  'Place Point',
-    [TOOLS.LINE]:   'Draw Line',
-    [TOOLS.BEZIER]: 'Draw Bezier',
-    [TOOLS.RECT]:   'Draw Rectangle',
-    [TOOLS.CIRCLE]: 'Draw Circle',
+  // ── Panel visibility (both stay mounted so no work is ever lost) ──────────
+  const showCanvas    = viewMode !== '3d';
+  const showMannequin = viewMode !== '2d';
+  const isEmpty = !patternState || Object.keys(patternState.points).length === 0;
+
+  const seg = (mode) => ({
+    padding: compact ? '0 12px' : '3px 10px',
+    height: compact ? 34 : 'auto',
+    fontSize: compact ? 12 : 10,
+    fontFamily: 'var(--font-mono)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+    backgroundColor: viewMode === mode ? 'var(--color-accent-dim)' : 'transparent',
+    color: viewMode === mode ? '#fff' : 'var(--color-text-dim)',
+    border: viewMode === mode ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
+    borderRadius: 6,
+    cursor: 'pointer',
+  });
+
+  const headerBtn = {
+    padding: '3px 10px', fontSize: 10, fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
+    letterSpacing: '0.06em', backgroundColor: 'transparent', color: 'var(--color-text-dim)',
+    border: '1px solid var(--color-border)', borderRadius: 4, cursor: 'pointer',
   };
 
-  // ── Panel visibility ──────────────────────────────────────────────────────
-  const showCanvas   = viewMode !== '3d';
-  const showMannequin = viewMode !== '2d';
+  const panelFlex = (mine) => (viewMode === 'split' ? `${mine} 1 0` : '1 1 auto');
 
   return (
     <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      width: '100vw',
-      height: '100vh',
-      overflow: 'hidden',
+      display: 'flex', flexDirection: 'column',
+      width: '100vw', height: '100dvh', overflow: 'hidden',
       backgroundColor: 'var(--color-canvas)',
     }}>
 
       {/* ── Header ───────────────────────────────────────────────────────── */}
       <header style={{
-        height: 38,
-        display: 'flex',
-        alignItems: 'center',
-        padding: '0 16px',
+        height: compact ? 50 : 38,
+        paddingTop: 'env(safe-area-inset-top)',
+        display: 'flex', alignItems: 'center',
+        padding: compact ? '0 10px' : '0 16px',
         backgroundColor: 'var(--color-panel)',
         borderBottom: '1px solid var(--color-border)',
-        flexShrink: 0,
-        gap: 12,
+        flexShrink: 0, gap: compact ? 8 : 12,
       }}>
-        <span style={{
-          fontSize: 13, fontWeight: 600,
-          color: 'var(--color-accent)',
-          letterSpacing: '0.04em', userSelect: 'none',
-        }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-accent)', letterSpacing: '0.04em', userSelect: 'none' }}>
           GarmentOS
         </span>
-        <span style={{ color: 'var(--color-border)', fontSize: 11 }}>|</span>
-        <span style={{ color: 'var(--color-text-dim)', fontSize: 12 }}>
-          Pattern Editor — Stage 2
-        </span>
+        {!isPhone && (
+          <>
+            <span style={{ color: 'var(--color-border)', fontSize: 11 }}>|</span>
+            <span style={{ color: 'var(--color-text-dim)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {patternName}
+            </span>
+          </>
+        )}
 
-        {/* Spacer */}
         <div style={{ flex: 1 }} />
 
-        {/* View mode toggle */}
-        <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+        <div role="group" aria-label="View" style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
           {['2d', 'split', '3d'].map(mode => (
-            <button
-              key={mode}
-              onClick={() => setViewMode(mode)}
-              style={{
-                padding: '3px 10px',
-                fontSize: 10,
-                fontFamily: 'var(--font-mono)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.06em',
-                backgroundColor: viewMode === mode ? 'var(--color-accent-dim)' : 'transparent',
-                color: viewMode === mode ? 'var(--color-accent)' : 'var(--color-text-dim)',
-                border: viewMode === mode ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
-                borderRadius: 4,
-                cursor: 'pointer',
-              }}
-            >
-              {mode === 'split' ? '2D | 3D' : mode}
+            <button key={mode} data-testid={`view-${mode}`} onClick={() => setViewMode(mode)} style={seg(mode)}>
+              {mode === 'split' ? (isPhone ? '2D+3D' : '2D | 3D') : mode}
             </button>
           ))}
         </div>
 
-        {/* Body type selector — only when 3D panel is visible */}
-        {showMannequin && (
+        {!isPhone && (
           <>
             <span style={{ color: 'var(--color-border)', fontSize: 11 }}>|</span>
             <select
               value={bodyType}
               onChange={e => setBodyType(e.target.value)}
-              style={{
-                padding: '3px 6px', fontSize: 10,
-                fontFamily: 'var(--font-mono)',
-                backgroundColor: 'var(--color-surface)',
-                color: 'var(--color-text-dim)',
-                border: '1px solid var(--color-border)',
-                borderRadius: 4, cursor: 'pointer',
-              }}
+              style={{ ...headerBtn, backgroundColor: 'var(--color-surface)', textTransform: 'none' }}
             >
-              <option value="male_adult">Adult Male</option>
-              <option value="female_adult">Adult Female</option>
-              <option value="male_child">Child Boy</option>
-              <option value="female_child">Child Girl</option>
+              {BODY_TYPES.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
             </select>
+            <button onClick={() => setShowMeasurements(v => !v)} style={{
+              ...headerBtn,
+              backgroundColor: showMeasurements ? 'var(--color-accent-dim)' : 'transparent',
+              color: showMeasurements ? 'var(--color-accent)' : 'var(--color-text-dim)',
+              borderColor: showMeasurements ? 'var(--color-accent)' : 'var(--color-border)',
+            }}>Measurements</button>
+            <button onClick={handleOpen} style={headerBtn}>Open</button>
+            <button onClick={handleSave} style={headerBtn}>Save</button>
           </>
         )}
 
-        {/* Measurements toggle — only when 3D panel is visible */}
-        {showMannequin && (
-          <>
-            <span style={{ color: 'var(--color-border)', fontSize: 11 }}>|</span>
-            <button
-              onClick={() => setShowMeasurements(v => !v)}
-              style={{
-                padding: '3px 10px',
-                fontSize: 10,
-                fontFamily: 'var(--font-mono)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.06em',
-                backgroundColor: showMeasurements ? 'var(--color-accent-dim)' : 'transparent',
-                color: showMeasurements ? 'var(--color-accent)' : 'var(--color-text-dim)',
-                border: showMeasurements ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
-                borderRadius: 4,
-                cursor: 'pointer',
-              }}
-            >
-              Measurements
-            </button>
-          </>
-        )}
+        <button
+          data-testid="menu-open"
+          aria-label="Open menu"
+          onClick={() => setMenuOpen(true)}
+          style={{
+            width: compact ? 42 : 30, height: compact ? 38 : 26, borderRadius: 6,
+            border: '1px solid var(--color-border)', background: 'var(--color-surface-2)',
+            color: 'var(--color-text)', cursor: 'pointer', fontSize: compact ? 18 : 14,
+          }}
+        >☰</button>
       </header>
 
       {/* ── Main workspace ───────────────────────────────────────────────── */}
-      <div ref={workspaceRef} style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-
-        {/* Left toolbar — only in 2D or split */}
-        {showCanvas && (
+      <div style={{ display: 'flex', flexDirection: 'row', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+        {!isPhone && showCanvas && (
           <Toolbar
+            activeTool={activeTool} onToolChange={handleToolChange}
+            showGrid={showGrid} onToggleGrid={handleToggleGrid}
+            onUndo={handleUndo} onRedo={handleRedo} onFit={handleFit}
+            canUndo={histState.canUndo} canRedo={histState.canRedo}
+          />
+        )}
+        {!isPhone && showCanvas && <BlockPanel onGenerate={handleGenerate} onClear={handleClearCanvas} />}
+
+      {/* Split area: percentages are of THIS box, not the whole row */}
+      <div
+        ref={workspaceRef}
+        style={{ display: 'flex', flexDirection: stacked ? 'column' : 'row', flex: 1, overflow: 'hidden', minHeight: 0, minWidth: 0 }}
+      >
+
+        {/* ── 2D canvas panel (kept mounted in 3D mode so edits are never lost) */}
+        <div style={{
+          flex: panelFlex(splitRatio),
+          display: showCanvas ? 'block' : 'none',
+          position: 'relative', overflow: 'hidden', minWidth: 0, minHeight: 0,
+        }}>
+          <PatternCanvas
+            ref={canvasRef}
             activeTool={activeTool}
-            onToolChange={handleToolChange}
             showGrid={showGrid}
-            onToggleGrid={handleToggleGrid}
-            onUndo={handleUndo}
-            onRedo={handleRedo}
-            canUndo={histState.canUndo}
-            canRedo={histState.canRedo}
+            onCursorMove={setCursor}
+            onHistoryChange={setHistState}
+            onPatternChange={handlePatternChange}
           />
-        )}
-
-        {/* Block panel — only in 2D or split */}
-        {showCanvas && (
-          <BlockPanel
-            onGenerate={handleGenerate}
-            onClear={handleClearCanvas}
-          />
-        )}
-
-        {/* ── 2D canvas panel ──────────────────────────────────────────── */}
-        {showCanvas && (
-          <div style={{
-            flex:     viewMode === '2d' ? 1 : `0 0 ${splitRatio}%`,
-            position: 'relative',
-            overflow: 'hidden',
-          }}>
-            <PatternCanvas
-              ref={canvasRef}
-              activeTool={activeTool}
-              showGrid={showGrid}
-              onCursorMove={setCursor}
-              onHistoryChange={setHistState}
-              onPatternChange={handlePatternChange}
-            />
-          </div>
-        )}
+          {isEmpty && (
+            <div data-testid="empty-hint" style={{
+              position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              pointerEvents: 'none', padding: 24,
+            }}>
+              <div style={{
+                maxWidth: 300, textAlign: 'center', color: 'var(--color-text-dim)', fontSize: 13, lineHeight: 1.5,
+                background: 'rgba(22,27,34,0.85)', border: '1px solid var(--color-border)', borderRadius: 10, padding: '14px 16px',
+              }}>
+                Start a pattern: open the menu <span style={{ color: 'var(--color-text)' }}>☰</span> and generate a trouser block,
+                or draw a closed shape with the tools. It wraps onto the body on the {stacked ? 'bottom' : 'right'} as you draw.
+                <div style={{ marginTop: 10, pointerEvents: 'auto' }}>
+                  <button
+                    data-testid="quick-generate"
+                    onClick={() => handleGenerate('trouser', 'trouser')}
+                    style={{
+                      minHeight: 40, padding: '0 14px', borderRadius: 8, border: '1px solid var(--color-accent)',
+                      background: 'var(--color-accent-dim)', color: '#fff', fontSize: 13, cursor: 'pointer',
+                    }}
+                  >Generate trouser block</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* ── Draggable divider ─────────────────────────────────────────── */}
         {viewMode === 'split' && (
           <div
-            onMouseDown={onDividerMouseDown}
+            data-testid="divider"
+            role="separator"
+            aria-orientation={stacked ? 'horizontal' : 'vertical'}
+            onPointerDown={onDividerPointerDown}
+            onPointerMove={onDividerPointerMove}
+            onPointerUp={onDividerPointerUp}
+            onPointerCancel={onDividerPointerUp}
             style={{
-              width: 5,
+              [stacked ? 'height' : 'width']: stacked ? 14 : (isPhone ? 14 : 6),
               flexShrink: 0,
-              backgroundColor: 'var(--color-border)',
-              cursor: 'col-resize',
-              transition: 'background-color 120ms',
-              position: 'relative',
+              backgroundColor: 'var(--color-panel)',
+              borderTop: stacked ? '1px solid var(--color-border)' : 'none',
+              borderBottom: stacked ? '1px solid var(--color-border)' : 'none',
+              borderLeft: stacked ? 'none' : '1px solid var(--color-border)',
+              borderRight: stacked || !isPhone ? 'none' : '1px solid var(--color-border)',
+              cursor: stacked ? 'row-resize' : 'col-resize',
+              touchAction: 'none',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
               zIndex: 1,
             }}
-            onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--color-accent)'; }}
-            onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'var(--color-border)'; }}
-          />
+          >
+            <div style={{
+              [stacked ? 'width' : 'height']: 36, [stacked ? 'height' : 'width']: 3,
+              borderRadius: 2, background: 'var(--color-text-muted)',
+            }} />
+          </div>
         )}
 
         {/* ── 3D mannequin panel ────────────────────────────────────────── */}
-        {showMannequin && (
-          <div style={{
-            flex:     viewMode === '3d' ? 1 : `0 0 ${100 - splitRatio}%`,
-            position: 'relative',
-            overflow: 'hidden',
-          }}>
-            <MannequinViewer
+        <div style={{
+          flex: panelFlex(100 - splitRatio),
+          display: showMannequin ? 'block' : 'none',
+          position: 'relative', overflow: 'hidden', minWidth: 0, minHeight: 0,
+        }}>
+          <MannequinViewer
+            measurements={measurements}
+            patternState={patternState}
+            bodyType={bodyType}
+            fabricColor={fabricColor}
+            onHandleDrag={handleHandleDrag}
+            compact={compact}
+          />
+          {!isPhone && showMeasurements && (
+            <MeasurementPanel
+              key={measurementsKey}
               measurements={measurements}
-              patternState={patternState}
-              bodyType={bodyType}
+              onChange={handleMeasurementChange}
+              onClose={() => setShowMeasurements(false)}
             />
-
-            {/* Measurement panel overlay */}
-            {showMeasurements && (
-              <MeasurementPanel
-                measurements={measurements}
-                onChange={updateMeasurement}
-                onClose={() => setShowMeasurements(false)}
-              />
-            )}
-          </div>
-        )}
+          )}
+        </div>
+      </div>
       </div>
 
-      {/* ── Status bar ───────────────────────────────────────────────────── */}
-      <footer style={{
-        height: 24,
-        display: 'flex',
-        alignItems: 'center',
-        padding: '0 12px',
-        gap: 20,
-        backgroundColor: 'var(--color-panel)',
-        borderTop: '1px solid var(--color-border)',
-        flexShrink: 0,
-        fontSize: 11,
-        fontFamily: 'var(--font-mono)',
-        color: 'var(--color-text-dim)',
-        userSelect: 'none',
-      }}>
-        {showCanvas && (
-          <>
-            <span style={{ color: 'var(--color-accent)' }}>{TOOL_LABELS[activeTool]}</span>
-            <span style={{ color: 'var(--color-border)' }}>|</span>
-            <span>
-              X: <span style={{ color: 'var(--color-text)' }}>{cursor.x.toFixed(1)}</span>mm
-              {' '}
-              Y: <span style={{ color: 'var(--color-text)' }}>{cursor.y.toFixed(1)}</span>mm
-            </span>
-            <span style={{ color: 'var(--color-border)' }}>|</span>
-          </>
-        )}
-        {showMannequin && (
-          <>
-            <span style={{ color: 'var(--color-text-muted)' }}>
-              3D — drag to rotate · scroll to zoom · click Measurements to adjust body
-            </span>
-            <span style={{ color: 'var(--color-border)' }}>|</span>
-          </>
-        )}
-        <span style={{ color: 'var(--color-text-muted)' }}>
-          S P L B R C — tools &nbsp; G — grid &nbsp; Ctrl+Z — undo &nbsp; Esc — cancel
-        </span>
-      </footer>
+      {/* ── Bottom toolbar (phone) ───────────────────────────────────────── */}
+      {isPhone && showCanvas && (
+        <Toolbar
+          horizontal
+          activeTool={activeTool} onToolChange={handleToolChange}
+          showGrid={showGrid} onToggleGrid={handleToggleGrid}
+          onUndo={handleUndo} onRedo={handleRedo} onFit={handleFit}
+          canUndo={histState.canUndo} canRedo={histState.canRedo}
+        />
+      )}
+
+      {/* ── Status bar (desktop) ─────────────────────────────────────────── */}
+      {!isPhone && (
+        <footer style={{
+          height: 24, display: 'flex', alignItems: 'center', padding: '0 12px', gap: 20,
+          backgroundColor: 'var(--color-panel)', borderTop: '1px solid var(--color-border)',
+          flexShrink: 0, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--color-text-dim)', userSelect: 'none',
+        }}>
+          {showCanvas && (
+            <>
+              <span style={{ color: 'var(--color-accent)' }}>{TOOL_LABELS[activeTool]}</span>
+              <span style={{ color: 'var(--color-border)' }}>|</span>
+              <span>
+                X: <span style={{ color: 'var(--color-text)' }}>{cursor.x.toFixed(1)}</span>mm{' '}
+                Y: <span style={{ color: 'var(--color-text)' }}>{cursor.y.toFixed(1)}</span>mm
+              </span>
+              <span style={{ color: 'var(--color-border)' }}>|</span>
+            </>
+          )}
+          {showMannequin && (
+            <>
+              <span style={{ color: 'var(--color-text-muted)' }}>3D — drag body to rotate · drag orange points to edit the pattern</span>
+              <span style={{ color: 'var(--color-border)' }}>|</span>
+            </>
+          )}
+          <span style={{ color: 'var(--color-text-muted)' }}>S P L B R C — tools &nbsp; G grid &nbsp; F fit &nbsp; Ctrl+Z undo</span>
+        </footer>
+      )}
+
+      <input
+        ref={fileInputRef} type="file" accept=".json,application/json" data-testid="file-input"
+        onChange={onFilePicked} style={{ display: 'none' }}
+      />
+
+      <MenuSheet
+        open={menuOpen}
+        side={stacked ? 'bottom' : 'right'}
+        onClose={() => setMenuOpen(false)}
+        patternName={patternName} onRename={setPatternName}
+        onNew={handleNew} onOpen={handleOpen} onSave={handleSave}
+        onGenerate={handleGenerate}
+        measurements={measurements} onMeasurementChange={handleMeasurementChange} measurementsKey={measurementsKey}
+        bodyType={bodyType} onBodyType={setBodyType}
+        fabricColor={fabricColor} onFabric={setFabricColor}
+        canInstall={canInstall} onInstall={install}
+      />
+
+      {toast && (
+        <div role="status" data-testid="toast" style={{
+          position: 'fixed', left: '50%', bottom: isPhone ? 76 : 40, transform: 'translateX(-50%)',
+          background: 'var(--color-surface-2)', color: 'var(--color-text)', border: '1px solid var(--color-border)',
+          borderRadius: 8, padding: '10px 14px', fontSize: 13, zIndex: 60, boxShadow: '0 6px 24px rgba(0,0,0,0.5)',
+          maxWidth: '90vw',
+        }}>{toast}</div>
+      )}
     </div>
   );
 }

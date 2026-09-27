@@ -83,10 +83,26 @@ const TOOL_DEFS = [
   },
 ];
 
-export default function Toolbar({ activeTool, onToolChange, showGrid, onToggleGrid, onUndo, onRedo, canUndo, canRedo }) {
+export default function Toolbar({ activeTool, onToolChange, showGrid, onToggleGrid, onUndo, onRedo, canUndo, canRedo, onFit, horizontal = false }) {
+  const divider = horizontal
+    ? { width: 1, height: 24, backgroundColor: 'var(--color-border)', margin: '0 4px', flexShrink: 0 }
+    : { width: 28, height: 1, backgroundColor: 'var(--color-border)', margin: '6px 0' };
   return (
     <aside
-      style={{
+      data-testid="toolbar"
+      style={horizontal ? {
+        display: 'flex',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 0,
+        padding: '4px 4px',
+        paddingBottom: 'calc(4px + env(safe-area-inset-bottom))',
+        backgroundColor: 'var(--color-panel)',
+        borderTop: '1px solid var(--color-border)',
+        flexShrink: 0,
+        overflowX: 'auto',
+        justifyContent: 'space-between',
+      } : {
         width: 48,
         display: 'flex',
         flexDirection: 'column',
@@ -104,26 +120,35 @@ export default function Toolbar({ activeTool, onToolChange, showGrid, onToggleGr
           key={tool.id}
           active={activeTool === tool.id}
           title={`${tool.label} (${tool.shortcut})`}
-          onClick={() => onToolChange(tool.id)}
+            onClick={() => onToolChange(tool.id)}
+          testId={`tool-${tool.id}`}
+          big={horizontal}
         >
           {tool.icon}
         </ToolButton>
       ))}
 
       {/* Divider */}
-      <div style={{ width: 28, height: 1, backgroundColor: 'var(--color-border)', margin: '6px 0' }} />
+      <div style={divider} />
 
       {/* Grid toggle */}
       <ToolButton
         active={showGrid}
         title="Toggle grid (G)"
         onClick={onToggleGrid}
+        big={horizontal}
       >
         <GridIcon />
       </ToolButton>
 
+      {onFit && (
+        <ToolButton active={false} title="Fit pattern to view (F)" onClick={onFit} testId="tool-fit" big={horizontal}>
+          <FitIcon />
+        </ToolButton>
+      )}
+
       {/* Divider */}
-      <div style={{ width: 28, height: 1, backgroundColor: 'var(--color-border)', margin: '6px 0' }} />
+      <div style={divider} />
 
       {/* Undo */}
       <ToolButton
@@ -131,6 +156,8 @@ export default function Toolbar({ activeTool, onToolChange, showGrid, onToggleGr
         disabled={!canUndo}
         title="Undo (Ctrl+Z)"
         onClick={onUndo}
+        testId="tool-undo"
+        big={horizontal}
       >
         <UndoIcon />
       </ToolButton>
@@ -141,6 +168,8 @@ export default function Toolbar({ activeTool, onToolChange, showGrid, onToggleGr
         disabled={!canRedo}
         title="Redo (Ctrl+Shift+Z)"
         onClick={onRedo}
+        testId="tool-redo"
+        big={horizontal}
       >
         <RedoIcon />
       </ToolButton>
@@ -150,15 +179,18 @@ export default function Toolbar({ activeTool, onToolChange, showGrid, onToggleGr
 
 // ── Internal sub-components ──────────────────────────────────────────────────
 
-function ToolButton({ children, active, disabled, title, onClick }) {
+function ToolButton({ children, active, disabled, title, onClick, testId, big }) {
   return (
     <button
       title={title}
+      aria-label={title}
+      aria-pressed={active}
+      data-testid={testId}
       onClick={onClick}
       disabled={disabled}
       style={{
-        width: 36,
-        height: 36,
+        width: big ? 36 : 36,
+        height: big ? 42 : 36,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -185,6 +217,15 @@ function ToolButton({ children, active, disabled, title, onClick }) {
     >
       {children}
     </button>
+  );
+}
+
+function FitIcon() {
+  return (
+    <svg viewBox="0 0 16 16" stroke="currentColor" strokeWidth="1.5" fill="none" width="16" height="16">
+      <path d="M1 5V1h4M11 1h4v4M15 11v4h-4M5 15H1v-4"/>
+      <rect x="5" y="5" width="6" height="6" strokeWidth="1"/>
+    </svg>
   );
 }
 

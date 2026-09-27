@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 
 // European standard defaults (ISO 8559 / Aldrich size 40)
 // All values in mm — matches canvas coordinate system
@@ -21,12 +21,17 @@ export const DEFAULT_MEASUREMENTS = {
   sleeveLength:     650,
 };
 
-export function useMeasurements() {
-  const [measurements, setMeasurements] = useState(DEFAULT_MEASUREMENTS);
+export function useMeasurements(initial = null) {
+  const [measurements, setMeasurements] = useState(() => ({ ...DEFAULT_MEASUREMENTS, ...(initial || {}) }));
 
-  function updateMeasurement(key, valueMm) {
+  const updateMeasurement = useCallback((key, valueMm) => {
     setMeasurements(m => ({ ...m, [key]: valueMm }));
-  }
+  }, []);
 
-  return { measurements, updateMeasurement };
+  /** Replace every measurement at once (opening a saved pattern). */
+  const replaceMeasurements = useCallback((next) => {
+    setMeasurements({ ...DEFAULT_MEASUREMENTS, ...(next || {}) });
+  }, []);
+
+  return { measurements, updateMeasurement, replaceMeasurements };
 }

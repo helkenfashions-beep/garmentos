@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
-  deriveBodyDims, torsoProfile, legProfile, lerp, bodyMeasurementsFor,
+  deriveBodyDims, torsoProfile, legProfile, lerp, bodyMeasurementsFor, TORSO_X, TORSO_Z,
 } from '../lib/body/dims';
 import { drapePattern, solvePatternPoint } from '../lib/drape/drape';
 
@@ -31,10 +31,25 @@ function buildSmoothBody(measurements) {
   }
 
   // Torso, legs — same profiles the drape engine wraps fabric around
-  mesh(new THREE.LatheGeometry(toV2(torsoProfile(d)), 48));
+  mesh(new THREE.LatheGeometry(toV2(torsoProfile(d)), 48)).scale.set(TORSO_X, 1, TORSO_Z);
   const legGeo = new THREE.LatheGeometry(toV2(legProfile(d)), 36);
-  mesh(legGeo, -d.legSpacing);
-  mesh(legGeo,  d.legSpacing);
+  const footGeo = new THREE.SphereGeometry(d.ankleR * 1.5, 20, 14);
+  // Each leg (and foot) hangs from a pivot at the crotch and splays outward,
+  // matching legCenterX() in lib/body/dims.js used by the drape engine.
+  for (const side of [-1, 1]) {
+    const pivot = new THREE.Group();
+    pivot.position.set(side * d.legSpacing, d.crotchH, 0);
+    pivot.rotation.z = side * d.legSplay;
+    const legMesh = new THREE.Mesh(legGeo, mat);
+    legMesh.position.set(0, -d.crotchH, 0);
+    legMesh.castShadow = legMesh.receiveShadow = true;
+    const foot = new THREE.Mesh(footGeo, mat);
+    foot.position.set(0, d.ankleH * 0.35 - d.crotchH, d.ankleR);
+    foot.scale.set(0.75, 0.42, 1.7);
+    foot.castShadow = true;
+    pivot.add(legMesh, foot);
+    grp.add(pivot);
+  }
 
   // Head
   const head = mesh(new THREE.SphereGeometry(d.headR, 36, 28), 0, d.headCtrH, 0);
@@ -57,10 +72,6 @@ function buildSmoothBody(measurements) {
   mesh(armGeo, -d.armSpacing);
   mesh(armGeo,  d.armSpacing);
 
-  // Feet
-  const footGeo = new THREE.SphereGeometry(d.ankleR * 1.5, 20, 14);
-  mesh(footGeo, -d.legSpacing, d.ankleH * 0.35, d.ankleR).scale.set(0.75, 0.42, 1.7);
-  mesh(footGeo,  d.legSpacing, d.ankleH * 0.35, d.ankleR).scale.set(0.75, 0.42, 1.7);
 
   return grp;
 }
@@ -165,6 +176,7 @@ export default function MannequinViewer({
 
   const [stats, setStats] = useState({ ms: 0, pieces: 0 });
   const framedRef = useRef(false);      // true once the user has orbited/zoomed
+  const lastBodyTypeRef = useRef(null);
   const bodyDimsRef = useRef(null);
 
   const bodyMeas = measurements ? bodyMeasurementsFor(measurements, bodyType) : null;
@@ -344,6 +356,11 @@ export default function MannequinViewer({
         framedRef.current = true;
       },
       setBodyVisible(v) { if (bodyRef.current) bodyRef.current.visible = v; },
+      cameraPos() { return camera.position.toArray(); },
+      bodyBox() {
+        const b = new THREE.Box3().setFromObject(bodyRef.current);
+        return { min: b.min.toArray(), max: b.max.toArray() };
+      },
     };
 
     const ro = new ResizeObserver(() => {
@@ -390,15 +407,21 @@ export default function MannequinViewer({
     const body = buildSmoothBody(bodyMeas);
     t.scene.add(body);
     bodyRef.current = body;
-    framedRef.current = false;
 
     const d = deriveBodyDims(bodyMeas);
     bodyDimsRef.current = d;
-    const { dist, ty } = frameBody(t.camera, d);
-    t.controls.target.set(0, ty, 0);
-    t.camera.position.set(0, ty, dist);
-    t.camera.lookAt(0, ty, 0);
-    t.controls.update();
+    // Reframe on first build or a new body type. While measurements are being
+    // edited, keep the view the user turned the body to.
+    const newType = lastBodyTypeRef.current !== bodyType;
+    lastBodyTypeRef.current = bodyType;
+    if (newType || !framedRef.current) {
+      framedRef.current = false;
+      const { dist, ty } = frameBody(t.camera, d);
+      t.controls.target.set(0, ty, 0);
+      t.camera.position.set(0, ty, dist);
+      t.camera.lookAt(0, ty, 0);
+      t.controls.update();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [measurements, bodyType]);
 

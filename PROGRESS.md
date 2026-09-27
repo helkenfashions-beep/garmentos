@@ -1,6 +1,6 @@
 # GarmentOS — Build Progress
 
-## Current Stage: Stage 3b Complete (live drape, two-way sync, Android offline app)
+## Current Stage: Stage 3c Complete (classic trouser block locked, live measurements)
 
 ---
 
@@ -209,6 +209,31 @@ Branch: mobile-split-view
 - Only trouser panels have placement rules; hand-drawn pieces wrap the torso front as a generic piece.
 - A faint centre line shows below the crotch where the two inner-leg faces meet.
 - Moving a construction guide does not move its level in the drape (drape levels come from piece metadata).
+
+## Stage 3c — Classic Trouser Block Locked + Live Measurements
+Status: COMPLETE
+Date: September 27 2026
+
+### Why
+Benson opened the preview and saw the old block looked nothing like a standard trouser block. Root cause: the crease sat on the centre-front edge instead of down the middle of each leg, so the legs were pushed sideways. A proposed snippet was compared side by side with the current block and a classic Aldrich redraft; Benson chose the classic redraft as the standard.
+
+### What changed
+- `trouserBlock.js` rewritten as the classic Aldrich block (see CLAUDE.md §3b for its rules). Piece metadata now carries named landmark point ids (fork, knees, hems, flip point…) and the fit.
+- Locked by `trouserBlock.standard.test.js`: every drafting rule, 4 sizes × 3 fits, plus a geometry snapshot.
+- Shared vertical lengths: `legLengths()` in `lib/body/dims.js` feeds both the block and the body. Old fallbacks put the knee at 41.5% of height and the hem 1.4 cm below the floor; now pattern knee/hem land on the mannequin's knee/ankle.
+- Mannequin rebuilt to fit a real crotch: oval torso (1.12 × 0.87 of a circle, same girth), rounded crotch at the bottom of the torso, thighs that just meet, 5° leg splay.
+- Drape engine reworked for the classic block: back fork drop eased along the back inseam; single crotch point where all crotch edges meet; oval legs (deeper at the thigh, round by the knee) so trousers hang from the seat; torso wrap capped at hip width (fork fabric goes under, not around); collision exits toward each panel's own side with smooth blends (no tears); hip wrap slightly squared.
+- New drape tests: side seam closed waist→hem, no tears (stretch ≤ 2.5×, ≤ 4.5× in the crotch band — known limit of the lathe mannequin), forks meet, nothing inside the body — for 5 body sizes. A mutation check confirmed the tear test catches the flip bug it was written for.
+- Live measurements: full trouser set (waist, hip, seat, body rise, upper thigh, knee, hip depth / waist-to-knee / waist-to-ankle with automatic values), range checks, block and body redraw as you type. Hand-edited patterns are never overwritten silently — "Apply to pattern" redraws, Undo brings the edits back. Phone: ruler button opens a measurements drawer below the 2D and 3D views; pattern refits. 3D keeps the user's camera angle while measurements change.
+
+### Tests
+- Unit: 187 tests (block rules + snapshot, drape geometry on 5 sizes, files) — run 3×.
+- E2E: split view, touch, offline/files, measurements — Pixel 7 portrait, Pixel 7 landscape, desktop — each run 3×.
+
+### Known limitations
+- Crotch-band stretch up to ~4× on the lathe mannequin; goes away with the MakeHuman/Anny body.
+- A thin sliver of mannequin can show between the thighs right at the crotch point from some angles.
+- Only the trouser block has drape rules; hand-drawn closed shapes wrap the torso front.
 
 ## Stage 4 — Shirt Block Engine
 Status: NOT STARTED

@@ -24,8 +24,13 @@ export const DEFAULT_MEASUREMENTS = {
 export function useMeasurements(initial = null) {
   const [measurements, setMeasurements] = useState(() => ({ ...DEFAULT_MEASUREMENTS, ...(initial || {}) }));
 
+  /** Set one measurement (mm). `undefined` clears it back to automatic. */
   const updateMeasurement = useCallback((key, valueMm) => {
-    setMeasurements(m => ({ ...m, [key]: valueMm }));
+    setMeasurements(m => {
+      const next = { ...m };
+      if (valueMm == null) delete next[key]; else next[key] = valueMm;
+      return next;
+    });
   }, []);
 
   /** Replace every measurement at once (opening a saved pattern). */

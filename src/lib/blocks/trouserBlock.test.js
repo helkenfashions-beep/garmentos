@@ -61,7 +61,7 @@ describe.each(['trouser', 'slack', 'jeans'])('trouser block French-curve seams (
     });
 
     it(`${piece}: inseam fork → knee is a French curve hollowed ~1 cm toward the crease`, () => {
-      const ins = seams.find(s => s.type === 'bezier' && Math.abs(P(b, s.p1).y - meta.riseY) < 1e-6 && Math.abs(P(b, s.p2).y - meta.kneeY) < 1e-6);
+      const ins = seams.find(s => s.type === 'bezier' && s.p1 === meta.landmarks.fork && s.p2 === meta.landmarks.kneeInner);
       expect(ins).toBeTruthy();
       const a = P(b, ins.p1), c = P(b, ins.p2);
       const m = cubicBezierPoint(a, ins.c1, ins.c2, c, 0.5);

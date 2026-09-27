@@ -205,8 +205,9 @@ export default function PatternCanvas({ activeTool, showGrid, onCursorMove, onHi
 
   useImperativeHandle(ref, () => ({
     undo, redo, canUndo, canRedo,
-    loadBlock: (points, segments, pieces) => {
-      fitPendingRef.current = true;
+    /** Load a generated block. `fit: false` keeps the current zoom (live measurement edits). */
+    loadBlock: (points, segments, pieces, { fit = true } = {}) => {
+      fitPendingRef.current = fit;
       dispatch({ type: 'LOAD_BLOCK', points, segments, pieces });
     },
     loadPattern: (p) => {

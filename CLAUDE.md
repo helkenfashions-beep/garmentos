@@ -85,6 +85,26 @@ Never approximate the crotch curve with a simple arc. Always use bezier.
 
 ---
 
+## 3b. THE TROUSER BLOCK STANDARD — LOCKED (27 Sep 2026)
+
+Benson approved the classic Aldrich trouser block ("3 is the most accurate … use 3 as the standard and true pattern block"). It lives in `src/lib/blocks/trouserBlock.js` and every other part of the system (3D body, drape, measurements, tests) is built backwards from it.
+
+What defines it:
+- Each panel is drafted around its own CREASE, halfway between side seam and fork tip at the crotch line; knee and hem split evenly on the crease
+- Front: waist WC/4 + 2cm (incl. dart), hip Hip/4 + ease, fly straight down CF then bezier to the fork
+- Back: seat Seat/4 + 5cm, waist WC/4 + 5cm (incl. darts), CB leans 3.5cm toward the side and is raised 2.5cm (pitched waist), deep bezier seat curve, fork 1.6 × front and dropped 1cm
+- Back leg 4cm wider than front at knee and hem
+- Outseam French curve flips at hip line + (hip to knee length) / 2; inseam fork→knee hollowed 1cm; knee→hem ruled straight; grainline on each crease
+- Vertical lengths (hip depth, waist-to-knee, waist-to-ankle) come from `legLengths()` in `src/lib/body/dims.js` — the SAME source the 3D body uses
+
+How it is locked:
+- `trouserBlock.standard.test.js` asserts every drafting rule above for 4 sizes × 3 fits and pins the geometry in a snapshot
+- If those tests fail, the block changed. Do NOT "fix" the tests or run `vitest -u` unless the new shape has been approved by the pattern maker
+
+The 3D side follows the block: oval torso (TORSO_X/TORSO_Z) with a rounded crotch, thighs that just meet, 5° leg splay, and a drape that eases the 1cm back-fork drop, pulls all crotch edges to one crotch point, and never tears (tested by stretch across 5 body sizes).
+
+---
+
 ## 4. COMPLETE FEATURE MANIFEST
 *Every feature listed here must exist in the final product. Do not omit any of these.*
 
@@ -311,5 +331,5 @@ Never approximate the crotch curve with a simple arc. Always use bezier.
 
 ---
 
-*Last updated: April 2026*
+*Last updated: September 2026 (classic trouser block locked as the standard)*
 *All three research documents should be present in the project directory*

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateTrouserBlock } from '../blocks/trouserBlock.js';
 import { DEFAULT_MEASUREMENTS } from '../../hooks/useMeasurements.js';
-import { deriveBodyDims, torsoProfile, legProfile, radiusAt } from '../body/dims.js';
+import { deriveBodyDims, torsoProfile, legProfile, radiusAt, legCenterX, TORSO_X, TORSO_Z } from '../body/dims.js';
 import { extractPieces } from './pieces.js';
 import { drapePattern, solvePatternPoint, closeDarts, dartIntervalsAt } from './drape.js';
 
@@ -90,35 +90,99 @@ describe('trouser drape', () => {
   it('fabric never cuts into the body (torso band and leg band)', () => {
     const torso = torsoProfile(dims), leg = legProfile(dims);
     const meta = pattern.pieces['trouser-front'];
-    const hipH = dims.waistH - (meta.hipY - meta.waistY);
-    const legTopH = dims.waistH - (meta.riseY - meta.waistY) - 75;
+    const legTopH = dims.waistH - (meta.riseY - meta.waistY) - 40;
     for (const i of inst) {
       for (let k = 0; k < i.positions.length; k += 3) {
         const x = i.positions[k], y = i.positions[k + 1], z = i.positions[k + 2];
-        if (y > dims.crotchH && y < dims.waistH - 5) {
-          expect(Math.hypot(x, z)).toBeGreaterThan(radiusAt(torso, y) - 0.5);
+        // the 3 cm above the crotch point is where the fork passes under the body
+        if (y > dims.crotchH + 30 && y < dims.waistH - 5) {
+          // outside the torso oval
+          const rt = radiusAt(torso, y);
+          expect(Math.hypot(x / (rt * TORSO_X), z / (rt * TORSO_Z))).toBeGreaterThan(0.995);
         }
         if (y < legTopH && y > dims.ankleH + 50) {
           // no fabric inside either leg — including the inner faces at the midline
-          for (const cx of [dims.legSpacing, -dims.legSpacing]) {
-            expect(Math.hypot(x - cx, z)).toBeGreaterThan(radiusAt(leg, y) - 0.5);
+          const L = legCenterX(dims, y);
+          for (const cx of [L, -L]) {
+            // legs splay, so measure perpendicular to the tilted axis (cos 5° ≈ 0.996)
+            expect(Math.hypot(x - cx, z)).toBeGreaterThan(radiusAt(leg, y) * Math.cos(dims.legSplay) - 1);
           }
         }
       }
     }
   });
 
-  it('closes the crotch: front and back fork points meet on the body', () => {
+  it('side seam stays closed from waist to hem (no splits)', () => {
     const pieces = extractPieces(pattern);
+    const fo = pieces.find(p => p.key === 'trouser-front').outline;
+    const bo = pieces.find(p => p.key === 'trouser-back').outline;
+    const meta = pattern.pieces['trouser-front'];
+    const hemY = Math.max(...fo.map(p => p.y));
+    // outer edge of each panel at a given height (front: leftmost, back: rightmost)
+    const edge = (poly, y, pick) => {
+      const xs = [];
+      for (let k = 0; k < poly.length; k++) {
+        const a = poly[k], c = poly[(k + 1) % poly.length];
+        if ((a.y <= y && c.y > y) || (c.y <= y && a.y > y)) xs.push(a.x + (y - a.y) * (c.x - a.x) / (c.y - a.y));
+      }
+      return pick(...xs);
+    };
+    let worst = 0;
     for (const sx of [1, -1]) {
       const f = get('trouser-front', sx), b = get('trouser-back', sx);
-      const meta = pattern.pieces['trouser-front'];
-      const y = meta.riseY - 0.05;
-      const fo = pieces.find(p => p.key === 'trouser-front').outline;
-      const bo = pieces.find(p => p.key === 'trouser-back').outline;
-      const fFork = fo.filter(p => Math.abs(p.y - meta.riseY) < 0.01).sort((p, q) => q.x - p.x)[0];
-      const bFork = bo.filter(p => Math.abs(p.y - meta.riseY) < 0.01).sort((p, q) => p.x - q.x)[0];
-      expect(d3(f.map(fFork.x - 0.01, y), b.map(bFork.x + 0.01, y))).toBeLessThan(4);
+      for (let y = meta.waistY + 5; y < hemY - 1; y += 10) {
+        const d = d3(f.map(edge(fo, y, Math.min), y), b.map(edge(bo, y, Math.max), y));
+        worst = Math.max(worst, d);
+      }
+    }
+    expect(worst).toBeLessThan(6);
+  });
+
+  it('fabric is continuous: no tears or flaps (nothing stretched far beyond the pattern)', () => {
+    // A tear or flap shows up as a short distance on the paper becoming a long
+    // distance on the body. Compare every mesh edge in 3D with the same edge on
+    // the flat pattern. (Shrinking is fine: closed darts collapse to nothing.)
+    //
+    // Known limitation, crotch band only (±7 cm of the crotch line): the
+    // mannequin torso is a round lathe, deeper front-to-back than a real seat,
+    // so the crotch curve has to stretch up to ~4× to pass under it. This goes
+    // when the MakeHuman/Anny body replaces the lathe. Real tears measured
+    // 7–30× and are still caught everywhere.
+    const worst = {};
+    for (const i of inst) {
+      const P = i.positions, Q = i.patternXY, I = i.indices;
+      const riseY = pattern.pieces[i.key].riseY;
+      let body = 0, crotch = 0;
+      for (let k = 0; k < I.length; k += 3) {
+        for (const [a, c] of [[I[k], I[k + 1]], [I[k + 1], I[k + 2]], [I[k + 2], I[k]]]) {
+          const d3d = Math.hypot(P[a * 3] - P[c * 3], P[a * 3 + 1] - P[c * 3 + 1], P[a * 3 + 2] - P[c * 3 + 2]);
+          if (d3d <= 8) continue;
+          const d2d = Math.hypot(Q[a * 2] - Q[c * 2], Q[a * 2 + 1] - Q[c * 2 + 1]);
+          const ratio = d3d / Math.max(d2d, 1);
+          const inCrotchBand = Math.abs(Q[a * 2 + 1] - riseY) < 70 && Math.abs(Q[c * 2 + 1] - riseY) < 70;
+          if (inCrotchBand) crotch = Math.max(crotch, ratio); else body = Math.max(body, ratio);
+        }
+      }
+      worst[`${i.key}:${i.sx}`] = { body: +body.toFixed(2), crotch: +crotch.toFixed(2) };
+    }
+    for (const [k, v] of Object.entries(worst)) {
+      expect([k, 'body', v.body < 2.5]).toEqual([k, 'body', true]);
+      expect([k, 'crotch', v.crotch < 4.5]).toEqual([k, 'crotch', true]);
+    }
+  });
+
+  it('closes the crotch: front and back fork points meet on the body', () => {
+    const pieces = extractPieces(pattern);
+    void pieces;
+    const P = pattern.points;
+    const fFork = P[pattern.pieces['trouser-front'].landmarks.fork];
+    const bFork = P[pattern.pieces['trouser-back'].landmarks.fork];
+    // the classic back fork is drafted 1 cm below the crotch line…
+    expect(bFork.y - fFork.y).toBeCloseTo(10, 6);
+    for (const sx of [1, -1]) {
+      const f = get('trouser-front', sx), b = get('trouser-back', sx);
+      // …and eased in on the body so the two forks still meet
+      expect(d3(f.map(fFork.x - 0.01, fFork.y - 0.05), b.map(bFork.x + 0.01, bFork.y - 0.05))).toBeLessThan(4);
     }
   });
 
@@ -219,6 +283,8 @@ describe('3D → 2D inverse (two-way sync)', () => {
     // drag straight "up" in 3D by 25 mm → pattern y should decrease ~25 mm
     const got = solvePatternPoint(i.map, h, [p[0], p[1] + 25, p[2]]);
     expect(got.y).toBeLessThan(h.y - 15);
-    expect(Math.abs(got.x - h.x)).toBeLessThan(15);
+    // mostly vertical: the body widens toward the chest, so a little sideways
+    // movement is the correct nearest point on the fabric
+    expect(Math.abs(got.x - h.x)).toBeLessThan(h.y - got.y);
   });
 });

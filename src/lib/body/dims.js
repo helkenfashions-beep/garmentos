@@ -9,6 +9,32 @@ const TAU = 2 * Math.PI;
 
 export function lerp(a, b, t) { return a + (b - a) * t; }
 
+// Proportions of height used when a length has not been measured directly
+export const WAIST_HEIGHT_RATIO = 0.615;
+export const KNEE_HEIGHT_RATIO  = 0.286;
+export const ANKLE_HEIGHT_RATIO = 0.054;
+export const HIP_DEPTH_DEFAULT  = 200;   // natural waist → hip line, mm
+
+// The torso is an oval, not a circle: wider side-to-side than front-to-back
+// (same girth). A round torso makes the seat far too deep for any crotch curve.
+export const TORSO_X = 1.12;
+export const TORSO_Z = 0.87;
+
+/**
+ * Vertical trouser lengths, measured down from the natural waist (mm).
+ * ONE source for both the pattern block and the 3D body, so the knee and
+ * hem lines on the pattern land on the knee and ankle of the mannequin.
+ * A measured value always wins; otherwise it is derived from height.
+ */
+export function legLengths(m) {
+  const H = m.height;
+  const waistH = H * WAIST_HEIGHT_RATIO;
+  const hipDepth     = m.hipToWaist   ?? HIP_DEPTH_DEFAULT;
+  const waistToKnee  = m.waistToKnee  ?? (waistH - H * KNEE_HEIGHT_RATIO);
+  const waistToAnkle = m.waistToAnkle ?? (waistH - H * ANKLE_HEIGHT_RATIO);
+  return { hipDepth, waistToKnee, waistToAnkle };
+}
+
 export function deriveBodyDims(m) {
   const H = m.height;
 
@@ -30,31 +56,47 @@ export function deriveBodyDims(m) {
   const neckTopH  = H - headR * 1.85;
   const shoulderH = H * 0.844;
   const chestH    = H * 0.756;
-  const waistH    = H * 0.615;
-  const hipH      = waistH - 190;
-  const seatH     = hipH  - 50;
+  const waistH    = H * WAIST_HEIGHT_RATIO;
+  const L         = legLengths(m);
   const crotchH   = waistH - m.bodyRise;
-  const kneeH     = H * 0.286;
-  const calfH     = H * 0.18;
-  const ankleH    = H * 0.054;
+  // hip, knee and ankle follow the trouser measurements (kept in a sane order)
+  const hipH      = Math.max(crotchH + 40, waistH - L.hipDepth);
+  const seatH     = lerp(hipH, crotchH, 0.35);
+  const kneeH     = Math.min(crotchH - 100, Math.max(H * 0.18, waistH - L.waistToKnee));
+  const ankleH    = Math.min(kneeH - 150, Math.max(20, waistH - L.waistToAnkle));
+  const calfH     = lerp(ankleH, kneeH, 0.54);
   const elbowH    = H * 0.630;
   const wristH    = H * 0.420;
 
-  const legSpacing = hipR * 0.40;
+  // thighs just meet at the crotch (a real crotch, not one fused mass)
+  const legSpacing = Math.max(hipR * 0.40, thighR * 0.98);
+  // Legs splay 5° from the crotch (feet apart, like a CLO avatar's stance) so
+  // the knees and hems of a trouser leg never press flat against each other.
+  const legSplay   = 5 * Math.PI / 180;
   const armSpacing = m.shoulderWidth / 2;
 
   return {
     H, headR, headCtrH, neckTopH, shoulderH, chestH,
     waistH, hipH, seatH, crotchH, kneeH, calfH, ankleH, elbowH, wristH,
     neckR, chestR, waistR, hipR, seatR, thighR, kneeR, calfR, ankleR,
-    upperArmR, wristR, legSpacing, armSpacing,
+    upperArmR, wristR, legSpacing, armSpacing, legSplay,
   };
+}
+
+/** x of the (right) leg axis at height Y — mirror for the left leg. */
+export function legCenterX(d, Y) {
+  return d.legSpacing + Math.max(0, d.crotchH - Y) * Math.tan(d.legSplay ?? 0);
 }
 
 /** Torso lathe profile, bottom → top, as [radius, height] pairs. */
 export function torsoProfile(d) {
+  // rounded bottom: the torso closes to a point at the crotch (perineum),
+  // so fabric can pass under it smoothly instead of meeting a flat disc
+  const cap = Math.min(25, (d.seatH - d.crotchH) * 0.6);
   return [
-    [d.thighR * 0.70,                    d.crotchH],
+    [0.5,                                d.crotchH],
+    [d.thighR * 0.45,                    d.crotchH + cap * 0.32],
+    [d.thighR * 0.70,                    d.crotchH + cap],
     [d.seatR,                            d.seatH],
     [d.hipR,                             d.hipH],
     [lerp(d.hipR, d.waistR, 0.35),       lerp(d.hipH, d.waistH, 0.35)],

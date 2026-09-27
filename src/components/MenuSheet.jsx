@@ -38,7 +38,7 @@ export default function MenuSheet({
   open, onClose, side = 'bottom',
   patternName, onRename, onNew, onOpen, onSave,
   onGenerate, measurements, onMeasurementChange, measurementsKey,
-  bodyType, onBodyType, fabricColor, onFabric, canInstall, onInstall,
+  bodyType, onBodyType, fabricColor, onFabric, canInstall, onInstall, needsApply, onApply,
 }) {
   const [blockType, setBlockType] = useState('trouser');
   const [fit, setFit] = useState('trouser');
@@ -133,7 +133,7 @@ export default function MenuSheet({
           <select id="body-type" data-testid="body-type" style={{ ...select, marginBottom: 6 }} value={bodyType} onChange={e => onBodyType(e.target.value)}>
             {BODY_TYPES.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
           </select>
-          <MeasurementPanel key={measurementsKey} inline measurements={measurements} onChange={onMeasurementChange} />
+          <MeasurementPanel key={measurementsKey} inline measurements={measurements} onChange={onMeasurementChange} needsApply={needsApply} onApply={onApply} />
         </Section>
 
         <div style={{ paddingTop: 12, fontSize: 12, color: 'var(--color-text-dim)', lineHeight: 1.5 }}>

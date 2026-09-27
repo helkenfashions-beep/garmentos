@@ -44,6 +44,23 @@ function useInstallPrompt() {
   return { canInstall: !!evt, install };
 }
 
+/** True when the canvas still holds exactly this generated block (no hand edits). */
+function isUneditedBlock(pat, block) {
+  const a = pat.points, b = block.points;
+  const ids = Object.keys(b);
+  if (Object.keys(a).length !== ids.length) return false;
+  for (const id of ids) {
+    if (!a[id] || Math.abs(a[id].x - b[id].x) > 1e-6 || Math.abs(a[id].y - b[id].y) > 1e-6) return false;
+  }
+  for (const [id, sg] of Object.entries(block.segments)) {
+    const cur = pat.segments[id];
+    if (!cur || cur.p1 !== sg.p1 || cur.p2 !== sg.p2) return false;
+    if (sg.type === 'bezier' && (Math.abs(cur.c1.x - sg.c1.x) > 1e-6 || Math.abs(cur.c1.y - sg.c1.y) > 1e-6 ||
+      Math.abs(cur.c2.x - sg.c2.x) > 1e-6 || Math.abs(cur.c2.y - sg.c2.y) > 1e-6)) return false;
+  }
+  return Object.keys(pat.segments).length === Object.keys(block.segments).length;
+}
+
 const TOOL_LABELS = {
   [TOOLS.SELECT]: 'Select',
   [TOOLS.POINT]:  'Place Point',
@@ -74,6 +91,8 @@ export default function App() {
   // ── Measurements, body, fabric ────────────────────────────────────────────
   const { measurements, updateMeasurement, replaceMeasurements } = useMeasurements(restored?.measurements);
   const [measurementsKey, setMeasurementsKey] = useState(0);
+  const prevMeasRef = useRef(measurements);          // measurements the canvas block was drawn from
+  const [needsApply, setNeedsApply] = useState(false);
   const [bodyType, setBodyType] = useState(restored?.bodyType ?? 'male_adult');
   const [fabricColor, setFabricColor] = useState(null);
   const [patternName, setPatternName] = useState(restored?.name ?? 'Untitled pattern');
@@ -85,6 +104,7 @@ export default function App() {
   const [splitRatio,       setSplitRatio]       = useState(stacked ? 52 : 60);
   const [showMeasurements, setShowMeasurements] = useState(false);
   const [menuOpen,         setMenuOpen]         = useState(false);
+  const [measureOpen,      setMeasureOpen]      = useState(false);   // phone drawer
   const [toast,            setToast]            = useState(null);
   const { canInstall, install } = useInstallPrompt();
 
@@ -146,11 +166,53 @@ export default function App() {
     if (blockType === 'trouser') {
       const { points, segments, pieces } = generateTrouserBlock(measurements, garmentType);
       canvasRef.current?.loadBlock(points, segments, pieces);
+      prevMeasRef.current = measurements;
+      setNeedsApply(false);
       setMenuOpen(false);
       say('Trouser block generated');
     }
   }, [measurements, say]);
   const handleClearCanvas = useCallback(() => canvasRef.current?.clearCanvas?.(), []);
+
+  // ── Live measurements → 2D block + 3D body ────────────────────────────────
+  // The body rebuilds on every change (MannequinViewer). The block is redrawn
+  // too, unless the pattern has hand edits: then we offer "Apply to pattern"
+  // instead of silently throwing the edits away.
+  const firstMeasRun = useRef(true);
+  useEffect(() => {
+    if (firstMeasRun.current) { firstMeasRun.current = false; return; }
+    const timer = setTimeout(() => {
+      const prev = prevMeasRef.current;
+      prevMeasRef.current = measurements;
+      const pat = canvasRef.current?.getPattern();
+      const fit = pat?.pieces?.['trouser-front']?.fit;
+      if (!pat || !fit) return;                          // no generated block on the canvas
+      if (isUneditedBlock(pat, generateTrouserBlock(prev, fit))) {
+        const { points, segments, pieces } = generateTrouserBlock(measurements, fit);
+        canvasRef.current?.loadBlock(points, segments, pieces, { fit: false });
+        setNeedsApply(false);
+      } else {
+        setNeedsApply(true);
+      }
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [measurements]);
+
+  // The drawer changes the pattern panel's size (and hides the toolbar's Fit
+  // button), so refit the pattern whenever it opens or closes.
+  useEffect(() => {
+    const t = setTimeout(() => canvasRef.current?.fitView?.(), 80);
+    return () => clearTimeout(t);
+  }, [measureOpen]);
+
+  const handleApplyMeasurements = useCallback(() => {
+    const pat = canvasRef.current?.getPattern();
+    const fit = pat?.pieces?.['trouser-front']?.fit ?? 'trouser';
+    const { points, segments, pieces } = generateTrouserBlock(measurements, fit);
+    canvasRef.current?.loadBlock(points, segments, pieces, { fit: false });
+    setNeedsApply(false);
+    say('Block redrawn from measurements');
+  }, [measurements, say]);
 
   // ── 3D → 2D: seam point dragged on the body ───────────────────────────────
   const handleHandleDrag = useCallback((pointId, x, y, commit) => {
@@ -291,7 +353,7 @@ export default function App() {
             >
               {BODY_TYPES.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
             </select>
-            <button onClick={() => setShowMeasurements(v => !v)} style={{
+            <button data-testid="measure-toggle" onClick={() => setShowMeasurements(v => !v)} style={{
               ...headerBtn,
               backgroundColor: showMeasurements ? 'var(--color-accent-dim)' : 'transparent',
               color: showMeasurements ? 'var(--color-accent)' : 'var(--color-text-dim)',
@@ -300,6 +362,26 @@ export default function App() {
             <button onClick={handleOpen} style={headerBtn}>Open</button>
             <button onClick={handleSave} style={headerBtn}>Save</button>
           </>
+        )}
+
+        {isPhone && (
+          <button
+            data-testid="measure-open"
+            aria-label="Measurements"
+            aria-pressed={measureOpen}
+            onClick={() => setMeasureOpen(v => !v)}
+            style={{
+              width: 42, height: 38, borderRadius: 6, cursor: 'pointer',
+              border: `1px solid ${measureOpen ? 'var(--color-accent)' : 'var(--color-border)'}`,
+              background: measureOpen ? 'var(--color-accent-dim)' : 'var(--color-surface-2)',
+              color: 'var(--color-text)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+              <rect x="2" y="6" width="16" height="8" rx="1.5" />
+              <path d="M5 6v3M8 6v4M11 6v3M14 6v4" />
+            </svg>
+          </button>
         )}
 
         <button
@@ -423,14 +505,32 @@ export default function App() {
               measurements={measurements}
               onChange={handleMeasurementChange}
               onClose={() => setShowMeasurements(false)}
+              needsApply={needsApply}
+              onApply={handleApplyMeasurements}
             />
           )}
         </div>
       </div>
       </div>
 
+      {/* ── Measurements drawer (phone): sits BELOW the views, so the 2D and 3D
+           stay visible and update while you type ─────────────────────────── */}
+      {isPhone && measureOpen && (
+        <div style={{ flex: stacked ? '0 0 40%' : '0 0 48%', minHeight: 0 }}>
+          <MeasurementPanel
+            key={measurementsKey}
+            drawer
+            measurements={measurements}
+            onChange={handleMeasurementChange}
+            onClose={() => setMeasureOpen(false)}
+            needsApply={needsApply}
+            onApply={handleApplyMeasurements}
+          />
+        </div>
+      )}
+
       {/* ── Bottom toolbar (phone) ───────────────────────────────────────── */}
-      {isPhone && showCanvas && (
+      {isPhone && showCanvas && !measureOpen && (
         <Toolbar
           horizontal
           activeTool={activeTool} onToolChange={handleToolChange}
@@ -481,6 +581,7 @@ export default function App() {
         onNew={handleNew} onOpen={handleOpen} onSave={handleSave}
         onGenerate={handleGenerate}
         measurements={measurements} onMeasurementChange={handleMeasurementChange} measurementsKey={measurementsKey}
+        needsApply={needsApply} onApply={handleApplyMeasurements}
         bodyType={bodyType} onBodyType={setBodyType}
         fabricColor={fabricColor} onFabric={setFabricColor}
         canInstall={canInstall} onInstall={install}

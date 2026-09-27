@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { generateTrouserBlock } from '../blocks/trouserBlock.js';
 import { DEFAULT_MEASUREMENTS } from '../../hooks/useMeasurements.js';
-import { deriveBodyDims, torsoProfile, legProfile, radiusAt, legCenterX, TORSO_X, TORSO_Z } from '../body/dims.js';
+import { createAvatarModel, bodyForDrape } from '../avatar/avatar.js';
 import { extractPieces } from './pieces.js';
 import { drapePattern, solvePatternPoint, closeDarts, dartIntervalsAt } from './drape.js';
 
 const M = DEFAULT_MEASUREMENTS;
-const dims = deriveBodyDims(M);
+const model = createAvatarModel(M);
+const dims = bodyForDrape(model);
 
 function block(fit = 'trouser') { return generateTrouserBlock(M, fit); }
 const d3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -87,28 +88,13 @@ describe('trouser drape', () => {
     }
   });
 
-  it('fabric never cuts into the body (torso band and leg band)', () => {
-    const torso = torsoProfile(dims), leg = legProfile(dims);
-    const meta = pattern.pieces['trouser-front'];
-    const legTopH = dims.waistH - (meta.riseY - meta.waistY) - 40;
+  it('fabric never cuts into the body (checked against the avatar skin itself)', () => {
     for (const i of inst) {
+      let worst = Infinity;
       for (let k = 0; k < i.positions.length; k += 3) {
-        const x = i.positions[k], y = i.positions[k + 1], z = i.positions[k + 2];
-        // the 3 cm above the crotch point is where the fork passes under the body
-        if (y > dims.crotchH + 30 && y < dims.waistH - 5) {
-          // outside the torso oval
-          const rt = radiusAt(torso, y);
-          expect(Math.hypot(x / (rt * TORSO_X), z / (rt * TORSO_Z))).toBeGreaterThan(0.995);
-        }
-        if (y < legTopH && y > dims.ankleH + 50) {
-          // no fabric inside either leg — including the inner faces at the midline
-          const L = legCenterX(dims, y);
-          for (const cx of [L, -L]) {
-            // legs splay, so measure perpendicular to the tilted axis (cos 5° ≈ 0.996)
-            expect(Math.hypot(x - cx, z)).toBeGreaterThan(radiusAt(leg, y) * Math.cos(dims.legSplay) - 1);
-          }
-        }
+        worst = Math.min(worst, model.sdf(i.positions[k], i.positions[k + 1], i.positions[k + 2]));
       }
+      expect([i.key, i.sx, worst > 0.5]).toEqual([i.key, i.sx, true]);
     }
   });
 

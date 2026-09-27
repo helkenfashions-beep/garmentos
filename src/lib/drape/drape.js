@@ -26,8 +26,13 @@
 import { extractPieces } from './pieces.js';
 import { torsoProfile, legProfile, radiusAt, legCenterX, TORSO_X, TORSO_Z } from '../body/dims.js';
 
+// `dims` passed to drapePattern must carry the avatar's collision field:
+//   dims.sdf(x, y, z), dims.normal(x, y, z), dims.crotchPoint
+// (see bodyForDrape() in lib/avatar/avatar.js).
+
 const ROW_TABLE_STEP = 4;   // mm — resolution of the width lookup
 const MESH_ROW_STEP  = 8;   // mm — vertical density of the fabric mesh
+const COLLIDE_GAP    = 3;   // mm — fabric rests this far off the skin
 const SEAM_OFFSET    = 5;   // mm — seam lines sit proud of the (camera-biased) fabric
 const PI = Math.PI;
 
@@ -152,6 +157,75 @@ function makeProfile(piece) {
 
 // ─── Mappers ──────────────────────────────────────────────────────────────────
 
+/**
+ * The body's centre-line profile (the x = 0 slice): up the front from the
+ * crotch to above the waist, and up the back, each as a polyline with running
+ * arc length, offset out by the collision gap. The crotch seam of a trouser
+ * lies along this line, so the centre edge of each panel is laid onto it by
+ * arc length — the fly and seat curves wrap under the body the way a sewn
+ * crotch seam does, instead of being squeezed into a few rows.
+ */
+const midlineCache = new WeakMap();
+export function midlinePath(dims) {
+  let path = midlineCache.get(dims);
+  if (path) return path;
+  const sdf = dims.sdf;
+  const off = COLLIDE_GAP + 1;
+  const cp = dims.crotchPoint ?? [0, dims.crotchH, 0];
+  const Y0 = cp[1] + 70;                       // centre of the arc under the crotch
+  const cz0 = dims.torsoSection ? dims.torsoSection(Y0).cz : cp[2];
+  const top = dims.waistH + 80;
+  // distance from (0, y0, z0) along (dy, dz) to the skin, plus the gap
+  const exit = (y0, z0, dy, dz) => {
+    let r = 0, v = sdf(0, y0, z0);
+    for (let k = 0; k < 200 && v < 0; k++) { r += Math.max(1, -v * 0.9); v = sdf(0, y0 + dy * r, z0 + dz * r); }
+    let lo = Math.max(0, r - 20), hi = r;
+    for (let k = 0; k < 16; k++) { const mid = (lo + hi) / 2; if (sdf(0, y0 + dy * mid, z0 + dz * mid) < 0) lo = mid; else hi = mid; }
+    return hi;
+  };
+  // skin point → pushed out along the surface normal (in the x = 0 plane)
+  const lift = (y, z) => {
+    const n = dims.normal(0, y, z);
+    const l = Math.hypot(n[1], n[2]) || 1;
+    return [y + (n[1] / l) * off, z + (n[2] / l) * off];
+  };
+  const side = (sgn) => {
+    const pts = [];
+    for (let y = top; y > Y0; y -= 5) {
+      const cz = dims.torsoSection ? dims.torsoSection(y).cz : 0;
+      pts.push(lift(y, cz + sgn * exit(y, cz, 0, sgn)));
+    }
+    // round the underside: rays from (Y0, cz0), from horizontal to straight down
+    for (let a = 1; a <= 45; a++) {
+      const th = (a / 45) * (PI / 2);
+      const dy = -Math.sin(th), dz = sgn * Math.cos(th);
+      const r = exit(Y0, cz0, dy, dz);
+      pts.push(lift(Y0 + dy * r, cz0 + dz * r));
+    }
+    // running arc length, measured from the waist
+    const s = [0];
+    for (let i = 1; i < pts.length; i++) s.push(s[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    let iw = 0; while (iw < pts.length - 1 && pts[iw + 1][0] >= dims.waistH) iw++;
+    const sw = s[iw] + (s[iw + 1] - s[iw]) * ((pts[iw][0] - dims.waistH) / ((pts[iw][0] - pts[iw + 1][0]) || 1));
+    for (let i = 0; i < s.length; i++) s[i] -= sw;
+    return { pts, s, length: s[s.length - 1] };
+  };
+  path = { front: side(1), back: side(-1) };
+  midlineCache.set(dims, path);
+  return path;
+}
+
+/** Point [y, z] at arc length `at` along a midline side (clamped to its ends). */
+function alongMidline(side, at) {
+  const { pts, s } = side;
+  if (at <= s[0]) return pts[0];
+  if (at >= s[s.length - 1]) return pts[pts.length - 1];
+  let lo = 0, hi = s.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (s[mid] > at) hi = mid; else lo = mid; }
+  const t = (at - s[lo]) / ((s[hi] - s[lo]) || 1);
+  return [pts[lo][0] + (pts[hi][0] - pts[lo][0]) * t, pts[lo][1] + (pts[hi][1] - pts[lo][1]) * t];
+}
+
 function trouserMapper(piece, profile, partnerProfile, dims) {
   const meta = piece.meta;
   const isFront = meta.panel === 'front';
@@ -173,6 +247,63 @@ function trouserMapper(piece, profile, partnerProfile, dims) {
   // body into the leg, not around the hips.
   const wHipSelf  = profile.effWidth(meta.hipY);
   const wHipOther = partnerProfile ? partnerProfile.effWidth(meta.hipY) : wHipSelf;
+  // front and back of the garment at the hip line: the centre seams lie on
+  // the body there (see the crotch seam below), so the body's front / back
+  // plus a little ease
+  let hipFrontZ = Infinity, hipBackZ = -Infinity;
+  if (dims.torsoSection) {
+    const sec = dims.torsoSection(dims.waistH - hipDepth);
+    hipFrontZ = sec.cz + sec.b + 12;
+    hipBackZ = sec.cz - sec.b - 12;
+  }
+
+  // Centre edge (CF / CB + crotch curve) arc length from the waist row down
+  // to the fork, on the flat pattern
+  const edgeX = (e) => (meta.sideAt === 'max' ? e.xmin : e.xmax);
+  const forkY = forkPt ? forkPt.y : meta.riseY;
+  const edgeYs = [], edgeS = [];
+  {
+    const rows = profile.table.rows.filter(r => r.y <= forkY);
+    let acc = 0;
+    for (let i = 0; i < rows.length; i++) {
+      if (i) acc += Math.hypot(edgeX(rows[i]) - edgeX(rows[i - 1]), rows[i].y - rows[i - 1].y);
+      edgeYs.push(rows[i].y); edgeS.push(acc);
+    }
+    if (forkPt && edgeYs.length) {
+      const last = profile.table.rows.filter(r => r.y <= forkY).pop();
+      acc += Math.hypot(forkPt.x - edgeX(last), forkPt.y - last.y);
+      edgeYs.push(forkPt.y); edgeS.push(acc);
+    }
+  }
+  // nearest point on the centre edge → its arc length and distance
+  const edgeXs = edgeYs.map((ey, i) => (i === edgeYs.length - 1 && forkPt) ? forkPt.x
+    : edgeX(profile.table.rows.filter(r => r.y <= forkY)[i]));
+  const nearestEdge = (x, y) => {
+    let best = Infinity, bs = 0;
+    for (let i = 0; i < edgeYs.length - 1; i++) {
+      const ax = edgeXs[i], ay = edgeYs[i], bx = edgeXs[i + 1], by = edgeYs[i + 1];
+      if (Math.min(Math.abs(y - ay), Math.abs(y - by)) > best && (y - ay) * (y - by) > 0) continue;
+      const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy || 1;
+      const t = clamp(((x - ax) * dx + (y - ay) * dy) / l2, 0, 1);
+      const d = Math.hypot(x - ax - dx * t, y - ay - dy * t);
+      if (d < best) { best = d; bs = edgeS[i] + (edgeS[i + 1] - edgeS[i]) * t; }
+    }
+    return { d: best, s: bs };
+  };
+  const edgeSAt = (y) => {
+    if (!edgeYs.length) return 0;
+    if (y <= edgeYs[0]) return edgeS[0] - (edgeYs[0] - y);
+    if (y >= edgeYs[edgeYs.length - 1]) return edgeS[edgeS.length - 1];
+    let i = 0; while (i < edgeYs.length - 2 && edgeYs[i + 1] < y) i++;
+    const t = (y - edgeYs[i]) / ((edgeYs[i + 1] - edgeYs[i]) || 1);
+    return edgeS[i] + (edgeS[i + 1] - edgeS[i]) * t;
+  };
+  const edgeWaist = edgeSAt(meta.waistY);
+  const edgeLen = edgeSAt(forkY) - edgeWaist;          // waist → fork along the seam
+  const mid = dims.sdf ? midlinePath(dims)[isFront ? 'front' : 'back'] : null;
+  // body seam from the waist to the crotch bottom; the fabric seam is laid on
+  // it end to end (a few % ease either way is absorbed here)
+  const seamScale = mid && edgeLen > 1 ? mid.length / edgeLen : 1;
 
   const easeIn = (h, u) => {
     if (Math.abs(forkDrop) < 0.01) return 0;
@@ -196,11 +327,11 @@ function trouserMapper(piece, profile, partnerProfile, dims) {
 
   return function map(x, y) {
     const { u, w } = rowU(x, y);
-    return place(u, y, w);
+    return place(u, y, w, x);
   };
 
   /** Body-space position of the pattern point at (u across the row, y down the panel). */
-  function place(u, y, w) {
+  function place(u, y, w, x) {
     const hRaw = y - meta.waistY;
     const h = hRaw - easeIn(hRaw, u);
     const Y = Math.max(2, dims.waistH - h);
@@ -217,37 +348,57 @@ function trouserMapper(piece, profile, partnerProfile, dims) {
     const wbT = isFront ? wOtherT : wSelfT;
     const uT = Math.min(1, (u * w) / wSelfT);
     const WtT = wfT + wbT;
-    const Rt = WtT / PI;
-    const bodyT = radiusAt(torso, Y);
-    // garment oval follows the body oval (same girth as the circle)
-    const Rx = Math.max(Rt * TORSO_X, bodyT * TORSO_X + 5);
-    const Rz = Math.max(Rt * TORSO_Z, bodyT * TORSO_Z + 5);
+    // garment oval follows the avatar's own cross-section at this height
+    // (same aspect, same centre), scaled up to the fabric's girth but never
+    // smaller than the skin plus a few mm
+    let Rx, Rz, cz = 0;
+    if (dims.torsoSection) {
+      // (below the seat the body's own sections shrink to the crotch; the
+      // garment doesn't — it keeps the seat's shape and hands over to the legs)
+      const cpY0 = (dims.crotchPoint ?? [0, dims.crotchH])[1];
+      const sec = dims.torsoSection(Math.max(Y, cpY0 + 55));
+      const s = Math.max((2 * WtT) / ellipsePerimeter(sec.a, sec.b), (sec.a + 6) / sec.a, (sec.b + 6) / sec.b);
+      Rx = sec.a * s; Rz = sec.b * s; cz = sec.cz;
+    } else {
+      const Rt = WtT / PI, bodyT = radiusAt(torso, Y);
+      Rx = Math.max(Rt * TORSO_X, bodyT * TORSO_X + 5);
+      Rz = Math.max(Rt * TORSO_Z, bodyT * TORSO_Z + 5);
+    }
     const beta = PI * wfT / WtT;
     const phi = isFront ? (1 - uT) * beta : beta + uT * (PI - beta);
     const sph = Math.sin(phi), cph = Math.cos(phi);
     const se = 2 / HIP_SQUARENESS;
     const tx = Rx * Math.sign(sph) * Math.pow(Math.abs(sph), se);
-    const tz = Rz * Math.sign(cph) * Math.pow(Math.abs(cph), se);
+    const tz = cz + Rz * Math.sign(cph) * Math.pow(Math.abs(cph), se);
 
     // Leg placement: full tube round one leg; front and back (forks included)
     // share the circumference
     const Wt = wf + wb;
-    const bodyL = Y > dims.crotchH ? dims.thighR : radiusAt(leg, Y);
+    const lsec = dims.legSection ? dims.legSection(Y) : null;
+    const bodyL = lsec ? lsec.r : Y > dims.crotchH ? dims.thighR : radiusAt(leg, Y);
     const Rl = Math.max(Wt / (2 * PI), bodyL + 5);
     const alphaF = 2 * PI * wf / Wt;
     const psi = isFront ? alphaF / 2 - u * alphaF : alphaF / 2 + u * (2 * PI - alphaF);
     // oval leg (same circumference as the circle) near the crotch → round at the knee
     const k = 1 + (LEG_DEPTH_RATIO - 1) * (1 - smoothstep(riseDepth, kneeDepth, h));
     const norm = 2 * PI / ellipsePerimeter(1 / k, k);
-    const ax = Rl * norm / k, az = Rl * norm * k;
+    let ax = Rl * norm / k;
+    const az = Rl * norm * k;
     // near the crotch the inner half of the leg reaches the centre line, so
     // left and right crotch seams meet; fades out down the leg
-    const legC = legCenterX(dims, Y);
-    const sp = Math.sin(psi);
+    const legC = lsec ? lsec.x : legCenterX(dims, Y);
+    const legZ = lsec ? lsec.z : 0;
+    // A trouser leg falls straight from the hip: it is never deeper, front or
+    // back, than the garment is at the hip line. Depth the tube can't take
+    // goes into its width instead (keeping the circumference).
+    const azF = Math.max(20, Math.min(az, hipFrontZ - legZ));
+    const azB = Math.max(20, Math.min(az, legZ - hipBackZ));
+    ax += ((az - azF) + (az - azB)) * 0.5;
+    const sp = Math.sin(psi), cp = Math.cos(psi);
     const reach = 1 - smoothstep(riseDepth, riseDepth + 150, h);
     const axIn = ax + Math.max(0, legC - 1 - ax) * reach;
     const lx = Math.max(1, legC + (sp < 0 ? axIn : ax) * sp);
-    const lz = az * Math.cos(psi);
+    const lz = legZ + (cp > 0 ? azF : azB) * cp;
 
     // Wide, soft hand-over from torso wrap to leg tubes (starts above the hip
     // line so the silhouette has no shelf at the hip)
@@ -259,84 +410,103 @@ function trouserMapper(piece, profile, partnerProfile, dims) {
     // CROTCH POINT: where the four crotch seams meet, under the body centre.
     // The crotch edge of every panel is drawn onto it, so front and back forks
     // (and left and right legs) always close there.
-    const wc = smoothstep(0.55, 1, u) * (1 - smoothstep(0, 120, Math.abs(h - riseDepth)));
-    px += (1 - px) * wc;
-    pz += (0 - pz) * wc;
-    return collide(px, Y, pz, isFront ? 1 : -1);
+    // The centre edge is the crotch seam: lay it along the body's centre line
+    // by arc length (down the front / back, curving under to the crotch).
+    // Rows are drawn onto it across their inner part, fading out down the
+    // inseam below the fork.
+    let Yp = Y, seamW = 0;
+    if (mid) {
+      const ramp = smoothstep(0.3, 0.6, u)
+        * smoothstep(hipDepth * 0.2, hipDepth * 0.7, hRaw)
+        * (1 - smoothstep(riseDepth, riseDepth + 30, h));
+      // each point follows the nearest part of the seam (near the fork the
+      // seam runs across the rows, not down them)
+      const ne = ramp > 0 ? nearestEdge(x, y) : null;
+      const wc = ne ? ramp * (1 - smoothstep(0, 0.45 * w, ne.d)) : 0;
+      if (wc > 0) {
+        const [my, mz] = alongMidline(mid, (ne.s - edgeWaist) * seamScale);
+        px += (0 - px) * wc;
+        pz += (mz - pz) * wc;
+        Yp += (my - Y) * wc;
+        seamW = wc;
+      }
+    }
+    // centre this row's fabric is wrapped around: the torso section's centre,
+    // moving onto the leg's centre as the panel hands over to the leg tube
+    const tc = dims.torsoSection ? dims.torsoSection(Yp).cz : 0;
+    // (above the crotch the centre stays on the midline: fabric over the seat
+    // and the fly moves straight back / forward, never sideways)
+    const cpY = (dims.crotchPoint ?? [0, dims.crotchH])[1];
+    const ox = legC * t * (1 - smoothstep(cpY - 10, cpY + 40, Yp)), oz = tc + (legZ - tc) * t;
+    return collide(px, Yp, pz, isFront ? 1 : -1, ox, oz, seamW);
   }
 
   /**
-   * Body collision: fabric can never sit inside the body. Any point inside the
-   * torso or a leg is pushed straight out to the skin + a small gap. This also
-   * makes over-tight edits show as fabric stretched onto the body.
+   * Body collision against the avatar's signed-distance field: any fabric
+   * point closer than GAP to the skin is pushed straight out along the surface
+   * normal (the SDF gradient) — smooth everywhere, including the rounded
+   * crotch saddle, so there is nothing to snag on and no direction flips.
+   *
+   * One safeguard: deep inside the body near the centre line the NEAREST skin
+   * can be on the other side (a front-panel point exiting through the back
+   * would fold the panel through itself). There the push direction leans
+   * toward the panel's own side, fading out smoothly everywhere else.
    */
-  function collide(x, Y, z, side) {
-    const GAP = 3;
-    if (Y > dims.crotchH) {
-      const rt0 = radiusAt(torso, Y);
-      const rtX = rt0 * TORSO_X + GAP, rtZ = rt0 * TORSO_Z + GAP;   // body oval + gap
-      const rt = (rtX + rtZ) / 2;
-      const r = Math.hypot(x / rtX, z / rtZ);                       // < 1 → inside
-      if (r < 1) {
-        // Outward push from the body axis. Near CF/CB the direction leans toward
-        // this panel's own side (front forward, back backward): close to the
-        // axis a plain radial direction is ill-defined and would flip fabric
-        // through the body. Toward the sides it is a plain radial push, so a
-        // side seam shared by front and back lands in one place.
-        const lean = side * 0.35 * rtZ * (1 - smoothstep(0.25 * rt, 0.5 * rt, Math.abs(x)));
-        const zl = z + lean;
-        const q = Math.hypot(x / rtX, zl / rtZ) || 1;                 // exit onto the oval
-        const nx = x / q;
-        const nz = zl / q;
-        // just above the crotch point the fork passes under the body: fade in
-        const wT = smoothstep(dims.crotchH, dims.crotchH + 30, Y);
-        x += (nx - x) * wT;
-        z += (nz - z) * wT;
-      }
-    }
-    if (Y < dims.crotchH + 30) {
-      // The two legs overlap near the crotch, so treat them as one union:
-      // exit radially from one leg, and if that lands inside the other leg,
-      // exit front/back (along z) instead.
-      const rl = (Y > dims.crotchH ? dims.thighR : radiusAt(leg, Y)) + GAP;
-      const L = legCenterX(dims, Y);
-      const inside = (px, pz, c) => Math.hypot(px - c, pz) < rl - 1e-6;
-      const inA = inside(x, z, L), inB = inside(x, z, -L);
-      // Right at the crotch point the fork passes under the body (between the
-      // thighs, out of sight), so the push fades in over the first 3.5 cm
-      // below the crotch — front and back forks can still meet there.
-      // (Measured trade-off: 3/3.5 cm keeps crotch stretch ≈ 4× while hiding
-      // most skin; tighter fades stretch the crotch > 5×.)
-      const wPush = smoothstep(dims.crotchH - 2, dims.crotchH - 35, Y);
-      if ((inA || inB) && wPush > 0) {
-        const c = inA && inB ? (x >= 0 ? L : -L) : (inA ? L : -L);
-        const dx = x - c, r = Math.hypot(dx, z);
-        // exit A: straight out of this thigh
-        const ax = r < 1e-6 ? c + Math.sign(c) * rl : c + dx * rl / r;
-        const az = r < 1e-6 ? z : z * rl / r;
-        // exit B: forward (front panel) / backward (back panel), keeping x —
-        // used where exit A would land inside the other thigh
-        const need = (cc) => Math.sqrt(Math.max(0, rl * rl - (x - cc) * (x - cc)));
-        const bz = side * Math.max(need(L), need(-L), Math.abs(z));
-        // blend smoothly by how deep exit A lands in the other thigh (no jumps)
-        const depthOther = rl - Math.hypot(ax + c, az);
-        const wB = smoothstep(-12, 12, depthOther);
-        const nx = ax + (x - ax) * wB;
-        const nz = az + (bz - az) * wB;
-        x += (nx - x) * wPush;
-        z += (nz - z) * wPush;
-        // final touch-up: a blended exit can graze a thigh by a millimetre or
-        // two — nudge it out (small, so it never creates a jump)
-        for (const cc of [L, -L]) {
-          const ddx = x - cc, rr = Math.hypot(ddx, z);
-          if (rr < rl && rr > 1e-6 && rl - rr < 15) {
-            const push = (rl - rr) * wPush;
-            x += ddx / rr * push; z += z / rr * push;
-          }
+  function collide(x, Y, z, side, ox = 0, oz = 0, seamW = 0) {
+    let px = x, py = Y, pz = z;
+    if (!dims.sdf) return [px, py, pz];
+    // 1) Radial push, level: a point inside the body moves straight out from
+    //    the row's wrap centre, keeping its height and its angle round the
+    //    body — so neighbouring pattern points stay neighbours on the body.
+    const cyS = dims.crotchPoint ? dims.crotchPoint[1] : dims.crotchH;
+    {
+      let dx = px - ox, dz = pz - oz;
+      const r = Math.hypot(dx, dz);
+      const march = (ux, uz) => {
+        let qx = px, qz = pz;
+        for (let it = 0; it < 12; it++) {
+          const dist = dims.sdf(qx, py, qz);
+          if (dist >= COLLIDE_GAP - 0.05) break;
+          const step = COLLIDE_GAP - dist;
+          qx += ux * step; qz += uz * step;
         }
+        return [qx, qz];
+      };
+      // (on the crotch seam the fabric already sits on the skin line — only
+      // the normal push applies there)
+      if (r > 5 && seamW < 0.5) {
+        let [qx, qz] = march(dx / r, dz / r);
+        // never through the centre line into the other leg: points by the
+        // midline go straight forward / back instead
+        // (just above the saddle the fork points are left to the normal push,
+        // which settles them under the crotch where front and back meet)
+        if (qx <= 0 && Y > cyS + 25) [qx, qz] = march(0, side);
+        if (qx > 0) { px = qx; pz = qz; }
       }
     }
-    return [x, Y, z];
+    // 2) What's left (the crotch saddle, points on the centre line) settles
+    //    along the surface normal.
+    // Pattern rows keep their height: above the crotch saddle the push is
+    // (almost) horizontal, so a row can't be shoved up or down past its
+    // neighbours. Only at the saddle itself does fabric move vertically.
+    const cy = dims.crotchPoint ? dims.crotchPoint[1] : dims.crotchH;
+    const vert = 1 - 0.85 * smoothstep(cy + 15, cy + 60, Y);
+    for (let it = 0; it < 6; it++) {
+      const dist = dims.sdf(px, py, pz);
+      if (dist >= COLLIDE_GAP - 0.05) break;
+      let [nx, ny, nz] = dims.normal(px, py, pz);
+      ny *= vert;
+      { const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l; }
+      const lean = smoothstep(-8, -50, dist) * (1 - smoothstep(40, 100, Math.abs(px)));
+      if (lean > 0 && nz * side < 0.3) {
+        nz += side * lean * 1.5;
+        const l = Math.hypot(nx, ny, nz) || 1;
+        nx /= l; ny /= l; nz /= l;
+      }
+      const push = COLLIDE_GAP - dist;
+      px += nx * push; py += ny * push; pz += nz * push;
+    }
+    return [px, py, pz];
   }
 }
 

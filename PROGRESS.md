@@ -235,6 +235,28 @@ Benson opened the preview and saw the old block looked nothing like a standard t
 - A thin sliver of mannequin can show between the thighs right at the crotch point from some angles.
 - Only the trouser block has drape rules; hand-drawn closed shapes wrap the torso front.
 
+## Stage 3d — Parametric Avatar + SDF Collision
+Status: COMPLETE
+Date: September 27 2026
+
+### Why
+Benson: "The avatar and 3D mannequin is off." He asked for an anatomically accurate parametric avatar that deforms from mm inputs as a segmented morph (local volume changes, clean manifold crotch), fabric collision that pushes outward smoothly with no collapse or explosion, and clean modular code — starting with avatar generation and scaling.
+
+### What changed
+- New `src/lib/avatar/` (see CLAUDE.md §3c): signed-distance body, calibrated to the tape measurements; surface-nets mesher with a manifold check; worker meshing so measurement edits never freeze the UI.
+- Viewer uses the avatar mesh (smooth normals from the distance field, debounced rebuild, old body stays until the new one is ready). Softer sky/ground lighting so the groin and underarms aren't black.
+- Drape now collides with the avatar's own field. Torso wrap takes its shape and centre from the avatar's sections; leg tubes from the avatar's legs; each panel's crotch seam is laid along the body's centre line by arc length (fly and seat curves wrap under the body like a sewn seam); legs fall straight from the hip instead of flaring at the crotch.
+- Drape tests use the avatar; crotch-band stretch now well under the limits on all 5 sizes.
+
+### Tests
+- Unit: 226 (avatar 39, drape on 5 sizes, block standard + snapshot, files) — run 3×.
+- E2E: split view, touch, offline/files, measurements — Pixel 7 portrait, Pixel 7 landscape, desktop — each run 3×.
+
+### Known limitations
+- A soft crease shows at the groin where torso and thighs blend.
+- Arms are in a fixed A-pose; no hands/fingers detail.
+- Cloth is still geometric; the PBD cloth solver (on-demand) is next.
+
 ## Stage 4 — Shirt Block Engine
 Status: NOT STARTED
 

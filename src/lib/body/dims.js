@@ -68,8 +68,9 @@ export function deriveBodyDims(m) {
   const elbowH    = H * 0.630;
   const wristH    = H * 0.420;
 
-  // thighs just meet at the crotch (a real crotch, not one fused mass)
-  const legSpacing = Math.max(hipR * 0.40, thighR * 0.98);
+  // thighs sit side by side with a small gap below the crotch (like a CLO
+  // avatar); the crotch itself is a rounded saddle blended over the gap
+  const legSpacing = Math.max(hipR * 0.40, thighR * 1.06);
   // Legs splay 5° from the crotch (feet apart, like a CLO avatar's stance) so
   // the knees and hems of a trouser leg never press flat against each other.
   const legSplay   = 5 * Math.PI / 180;

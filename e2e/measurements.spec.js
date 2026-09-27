@@ -28,16 +28,15 @@ test('editing a measurement redraws the 2D block and the 3D body live', async ({
   expect(c.height).toBeGreaterThan(80);
   expect(v.height).toBeGreaterThan(80);
 
-  const body0 = await page.evaluate(() => window.__garmentos3d.bodyBox());
+  await expect(page.getByTestId('viewer3d')).toHaveAttribute('data-body-ready', 'true');
+  const depthAtWaist = () => page.evaluate(() => window.__garmentos3d.bodyDepthAt(window.__garmentos3d.waistHeight()));
+  const depth0 = await depthAtWaist();
   expect(frontWaist(await pattern(page))).toBeCloseTo(840 / 4 + 20, 3);
 
   await page.getByTestId('m-waist').fill('100');
   await expect.poll(async () => frontWaist(await pattern(page)), { timeout: 3000 }).toBeCloseTo(1000 / 4 + 20, 3);
   // 3D: body got wider and the garment re-draped
-  await expect.poll(async () => {
-    const b = await page.evaluate(() => window.__garmentos3d.bodyBox());
-    return (b.max[0] - b.min[0]) - (body0.max[0] - body0.min[0]);
-  }, { timeout: 3000 }).toBeGreaterThanOrEqual(0);
+  await expect.poll(async () => (await depthAtWaist()) - depth0, { timeout: 8000 }).toBeGreaterThan(10);
   await expect(page.getByTestId('viewer3d')).toHaveAttribute('data-drape-pieces', '2');
 
   // longer legs: waist-to-ankle drives the hem

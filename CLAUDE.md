@@ -101,7 +101,18 @@ How it is locked:
 - `trouserBlock.standard.test.js` asserts every drafting rule above for 4 sizes × 3 fits and pins the geometry in a snapshot
 - If those tests fail, the block changed. Do NOT "fix" the tests or run `vitest -u` unless the new shape has been approved by the pattern maker
 
-The 3D side follows the block: oval torso (TORSO_X/TORSO_Z) with a rounded crotch, thighs that just meet, 5° leg splay, and a drape that eases the 1cm back-fork drop, pulls all crotch edges to one crotch point, and never tears (tested by stretch across 5 body sizes).
+The 3D side follows the block: the parametric avatar (§3c) and a drape that eases the 1cm back-fork drop, lays each panel's crotch seam along the body's centre line by arc length so the forks meet under the crotch, and never tears (tested by stretch across 5 body sizes).
+
+## 3c. THE PARAMETRIC AVATAR (27 Sep 2026)
+
+The mannequin is one signed-distance body in `src/lib/avatar/` — the same field is meshed for display and answers the fabric's collision queries, so what you see is what the fabric touches.
+- `sdf.js` — primitives (round cones, ellipsoids, ellipse sections, smooth min, monotone keyframe curves)
+- `body.js` — `createBodyModel()`: torso lofted through keyframed oval sections (separate front/back depth at the torso bottom: belly runs into the fly, seat curves under), round-cone legs and arms (A-pose, opened to clear the hips), neck, head. Then CALIBRATED: tape-measure girths (convex hull, like a real tape) for chest, waist, hip, seat and upper thigh are iterated to the measurements (±0.4%), and the crotch is moved to exactly one body rise below the waist
+- `mesher.js` — surface nets, closed manifold mesh (checked; retried on a shifted grid if not)
+- `avatar.js` — `createAvatar()`, `createAvatarModel()`, `bodyForDrape()`, `avatarMeshData()`; `avatar.worker.js` meshes off the main thread
+- Each measurement changes its own region only (tested: hip, upper thigh, body rise, shoulder width)
+- Drape collision: level (horizontal) push out from each row's wrap centre, then a push along the surface normal; fabric rests 3mm off the skin
+- Tests: `avatar.test.js` (girths, height, crotch height, manifold mesh, crotch saddle, outward normals, speed, local morphs) for 5 bodies
 
 ---
 

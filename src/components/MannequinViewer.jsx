@@ -1,78 +1,34 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import {
-  deriveBodyDims, torsoProfile, legProfile, lerp, bodyMeasurementsFor, TORSO_X, TORSO_Z,
-} from '../lib/body/dims';
+import { createAvatarModel, bodyForDrape } from '../lib/avatar/avatar';
+import { requestAvatarMesh } from '../lib/avatar/meshClient';
 import { drapePattern, solvePatternPoint } from '../lib/drape/drape';
 
 // ─── Body geometry ────────────────────────────────────────────────────────────
 //
-// All dimensions in mm. Body dimensions and lathe profiles live in
-// lib/body/dims.js so the drape engine and the mannequin always agree.
+// The mannequin is the parametric avatar (lib/avatar): one signed-distance
+// body, calibrated to the measurements, meshed off the main thread. The drape
+// collides with the same field, so what you see is what the fabric touches.
 
-const V = (r, y) => new THREE.Vector2(r, y);
-const toV2 = (profile) => profile.map(([r, h]) => V(r, h));
+const BODY_SPACING = 12;      // mm between mesh samples
+const BODY_DEBOUNCE = 90;     // ms — coalesce fast measurement edits
 
-function buildSmoothBody(measurements) {
-  const d   = deriveBodyDims(measurements);
+function buildBodyMesh({ positions, normals, indices }) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  geo.setIndex(new THREE.BufferAttribute(indices, 1));
+  geo.computeBoundingSphere();
+  const mat = new THREE.MeshStandardMaterial({ color: 0xd0c4b8, roughness: 0.72, metalness: 0.0 });
+  const mesh = new THREE.Mesh(geo, mat);
+  // casts onto the floor; no self-shadowing (the shadow map is too coarse
+  // for the crotch and armpits and would draw ragged dark patches there)
+  mesh.castShadow = true;
+  mesh.receiveShadow = false;
   const grp = new THREE.Group();
   grp.name = 'body';
-
-  const mat = new THREE.MeshStandardMaterial({ color: 0xd0c4b8, roughness: 0.72, metalness: 0.0 });
-
-  function mesh(geo, x = 0, y = 0, z = 0) {
-    const m = new THREE.Mesh(geo, mat);
-    m.position.set(x, y, z);
-    m.castShadow = true;
-    m.receiveShadow = true;
-    grp.add(m);
-    return m;
-  }
-
-  // Torso, legs — same profiles the drape engine wraps fabric around
-  mesh(new THREE.LatheGeometry(toV2(torsoProfile(d)), 48)).scale.set(TORSO_X, 1, TORSO_Z);
-  const legGeo = new THREE.LatheGeometry(toV2(legProfile(d)), 36);
-  const footGeo = new THREE.SphereGeometry(d.ankleR * 1.5, 20, 14);
-  // Each leg (and foot) hangs from a pivot at the crotch and splays outward,
-  // matching legCenterX() in lib/body/dims.js used by the drape engine.
-  for (const side of [-1, 1]) {
-    const pivot = new THREE.Group();
-    pivot.position.set(side * d.legSpacing, d.crotchH, 0);
-    pivot.rotation.z = side * d.legSplay;
-    const legMesh = new THREE.Mesh(legGeo, mat);
-    legMesh.position.set(0, -d.crotchH, 0);
-    legMesh.castShadow = legMesh.receiveShadow = true;
-    const foot = new THREE.Mesh(footGeo, mat);
-    foot.position.set(0, d.ankleH * 0.35 - d.crotchH, d.ankleR);
-    foot.scale.set(0.75, 0.42, 1.7);
-    foot.castShadow = true;
-    pivot.add(legMesh, foot);
-    grp.add(pivot);
-  }
-
-  // Head
-  const head = mesh(new THREE.SphereGeometry(d.headR, 36, 28), 0, d.headCtrH, 0);
-  head.scale.set(1.0, 1.08, 0.88);
-
-  // Arms
-  const armProfile = [
-    V(d.wristR,                  d.wristH),
-    V(d.wristR * 1.18,           d.wristH + 35),
-    V(lerp(d.wristR, d.upperArmR, 0.30), lerp(d.wristH, d.elbowH, 0.30)),
-    V(lerp(d.wristR, d.upperArmR, 0.60), lerp(d.wristH, d.elbowH, 0.60)),
-    V(d.upperArmR * 0.82,        d.elbowH - 28),
-    V(d.upperArmR * 0.96,        d.elbowH),
-    V(d.upperArmR * 0.88,        d.elbowH + 28),
-    V(lerp(d.upperArmR, d.upperArmR * 1.18, 0.35), lerp(d.elbowH, d.shoulderH, 0.35)),
-    V(lerp(d.upperArmR, d.upperArmR * 1.18, 0.70), lerp(d.elbowH, d.shoulderH, 0.70)),
-    V(d.upperArmR * 1.18,        d.shoulderH),
-  ];
-  const armGeo = new THREE.LatheGeometry(armProfile, 32);
-  mesh(armGeo, -d.armSpacing);
-  mesh(armGeo,  d.armSpacing);
-
-
+  grp.add(mesh);
   return grp;
 }
 
@@ -141,10 +97,11 @@ function disposeObject(obj) {
 // ─── Camera framing ───────────────────────────────────────────────────────────
 
 /** Distance and target that fit the whole body in the panel, whatever its shape. */
-function frameBody(camera, d) {
+function frameBody(camera, model) {
+  const d = model.dims;
   const halfFov = (camera.fov * Math.PI / 180) / 2;
   const needH = d.H * 1.22;                 // full height + room for the camera buttons
-  const needW = d.armSpacing * 2 + 260;     // shoulders + arms + margin
+  const needW = model.bounds.max[0] * 2 + 120;   // hands (A-pose) + margin
   const distH = (needH / 2) / Math.tan(halfFov);
   const distW = (needW / 2) / (Math.tan(halfFov) * (camera.aspect || 1));
   return { dist: Math.max(distH, distW), ty: d.H * 0.47 };
@@ -178,8 +135,15 @@ export default function MannequinViewer({
   const framedRef = useRef(false);      // true once the user has orbited/zoomed
   const lastBodyTypeRef = useRef(null);
   const bodyDimsRef = useRef(null);
+  const setPresetRef = useRef(null);
 
-  const bodyMeas = measurements ? bodyMeasurementsFor(measurements, bodyType) : null;
+  // calibrated body (fast, main thread) — shared by the drape and the framing
+  const model = useMemo(
+    () => (measurements ? createAvatarModel(measurements, bodyType) : null),
+    [measurements, bodyType],
+  );
+  const drapeBody = useMemo(() => (model ? bodyForDrape(model) : null), [model]);
+  const [bodyInfo, setBodyInfo] = useState({ ready: false, ms: 0 });
 
   // ── Scene setup (once) ──────────────────────────────────────────────────
   useEffect(() => {
@@ -198,7 +162,12 @@ export default function MannequinViewer({
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    // sky/ground ambient: undersides (groin, under the arms) get a soft
+    // bounce instead of flat darkness
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x6e6660, 0.75));
+    const front = new THREE.DirectionalLight(0xffffff, 0.30);
+    front.position.set(0, 300, 2000);
+    scene.add(front);
     const key = new THREE.DirectionalLight(0xfff8f0, 1.20);
     key.position.set(600, 2000, 1200);
     key.castShadow = true;
@@ -358,9 +327,30 @@ export default function MannequinViewer({
       setBodyVisible(v) { if (bodyRef.current) bodyRef.current.visible = v; },
       cameraPos() { return camera.position.toArray(); },
       bodyBox() {
+        if (!bodyRef.current) return null;
         const b = new THREE.Box3().setFromObject(bodyRef.current);
         return { min: b.min.toArray(), max: b.max.toArray() };
       },
+      bodyReady() { return !!bodyRef.current; },
+      /** Front-to-back depth of the body mesh at height y (arms don't affect it). */
+      bodyDepthAt(y) {
+        let lo = Infinity, hi = -Infinity;
+        bodyRef.current?.traverse(o => {
+          if (!o.isMesh) return;
+          const p = o.geometry.attributes.position.array;
+          for (let i = 0; i < p.length; i += 3) if (Math.abs(p[i + 1] - y) < 8) { lo = Math.min(lo, p[i + 2]); hi = Math.max(hi, p[i + 2]); }
+        });
+        return hi - lo;
+      },
+      waistHeight() { return bodyDimsRef.current?.dims.waistH ?? null; },
+      debugNormals(on) {
+        bodyRef.current?.traverse(o => {
+          if (!o.isMesh) return;
+          if (on) { o.userData.mat = o.material; o.material = new THREE.MeshNormalMaterial(); }
+          else if (o.userData.mat) o.material = o.userData.mat;
+        });
+      },
+      setGarmentVisible(v) { if (garmentRef.current) garmentRef.current.group.visible = v; },
     };
 
     const ro = new ResizeObserver(() => {
@@ -399,30 +389,42 @@ export default function MannequinViewer({
     };
   }, []);
 
-  // ── Rebuild body when measurements / bodyType change ─────────────────────
+  // ── Frame the camera for a new body ─────────────────────────────────────
   useEffect(() => {
     const t = threeRef.current;
-    if (!t || !bodyMeas) return;
-    if (bodyRef.current) { disposeObject(bodyRef.current); t.scene.remove(bodyRef.current); }
-    const body = buildSmoothBody(bodyMeas);
-    t.scene.add(body);
-    bodyRef.current = body;
-
-    const d = deriveBodyDims(bodyMeas);
-    bodyDimsRef.current = d;
+    if (!t || !model) return;
+    bodyDimsRef.current = model;
     // Reframe on first build or a new body type. While measurements are being
     // edited, keep the view the user turned the body to.
     const newType = lastBodyTypeRef.current !== bodyType;
     lastBodyTypeRef.current = bodyType;
     if (newType || !framedRef.current) {
       framedRef.current = false;
-      const { dist, ty } = frameBody(t.camera, d);
+      const { dist, ty } = frameBody(t.camera, model);
       t.controls.target.set(0, ty, 0);
       t.camera.position.set(0, ty, dist);
       t.camera.lookAt(0, ty, 0);
       t.controls.update();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, bodyType]);
+
+  // ── Mesh the body (worker, debounced) ───────────────────────────────────
+  // The old mesh stays on screen until the new one arrives, so editing a
+  // measurement never flashes an empty scene.
+  useEffect(() => {
+    if (!measurements) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const data = await requestAvatarMesh(measurements, bodyType, BODY_SPACING);
+      const t = threeRef.current;
+      if (cancelled || !t) return;
+      if (bodyRef.current) { disposeObject(bodyRef.current); t.scene.remove(bodyRef.current); }
+      const body = buildBodyMesh(data);
+      t.scene.add(body);
+      bodyRef.current = body;
+      setBodyInfo({ ready: true, ms: data.ms });
+    }, bodyRef.current ? BODY_DEBOUNCE : 0);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [measurements, bodyType]);
 
   // ── Drape the pattern onto the body (live sync) ──────────────────────────
@@ -437,13 +439,16 @@ export default function MannequinViewer({
     }
     const prevInstances = instancesRef.current;
     instancesRef.current = [];
-    if (!patternState || !bodyMeas) { setStats({ ms: 0, pieces: 0 }); return; }
+    if (!patternState || !drapeBody) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- the drape is an external (Three.js) system
+      setStats({ ms: 0, pieces: 0 });
+      return;
+    }
 
     const t0 = performance.now();
-    const d = deriveBodyDims(bodyMeas);
     let instances = [];
     try {
-      instances = drapePattern(patternState, d);
+      instances = drapePattern(patternState, drapeBody);
     } catch (err) {
       console.warn('drape failed', err);
     }
@@ -466,15 +471,14 @@ export default function MannequinViewer({
     instancesRef.current = instances;
     const ms = performance.now() - t0;
     setStats({ ms, pieces: new Set(instances.map(i => i.key)).size });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patternState, measurements, bodyType, fabricColor]);
+   
+  }, [patternState, drapeBody, fabricColor]);
 
   // ── Camera presets ───────────────────────────────────────────────────────
   const setCameraPreset = useCallback((preset) => {
     const t = threeRef.current;
-    if (!t || !bodyMeas) return;
-    const d  = deriveBodyDims(bodyMeas);
-    const { dist, ty } = frameBody(t.camera, d);
+    if (!t || !model) return;
+    const { dist, ty } = frameBody(t.camera, model);
     t.controls.target.set(0, ty, 0);
     switch (preset) {
       case 'front': t.camera.position.set(0,   ty,  dist); break;
@@ -484,9 +488,7 @@ export default function MannequinViewer({
     }
     t.camera.lookAt(0, ty, 0);
     t.controls.update();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [measurements, bodyType]);
-  const setPresetRef = useRef(setCameraPreset);
+  }, [model]);
   useEffect(() => { setPresetRef.current = setCameraPreset; }, [setCameraPreset]);
 
   const pill = {
@@ -502,6 +504,8 @@ export default function MannequinViewer({
       data-testid="viewer3d"
       data-drape-ms={stats.ms.toFixed(1)}
       data-drape-pieces={stats.pieces}
+      data-body-ready={bodyInfo.ready ? 'true' : 'false'}
+      data-body-ms={bodyInfo.ms.toFixed(0)}
       style={{ position: 'relative', width: '100%', height: '100%' }}
     >
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />

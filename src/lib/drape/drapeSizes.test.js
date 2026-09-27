@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateTrouserBlock } from '../blocks/trouserBlock.js';
 import { DEFAULT_MEASUREMENTS as M } from '../../hooks/useMeasurements.js';
-import { deriveBodyDims, torsoProfile, legProfile, radiusAt, legCenterX, TORSO_X, TORSO_Z, bodyMeasurementsFor } from '../body/dims.js';
+import { createAvatarModel, bodyForDrape } from '../avatar/avatar.js';
 import { drapePattern } from './drape.js';
 
 const SIZES = {
@@ -22,15 +22,19 @@ const d3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 for (const [name, [m, fit, bodyType]] of Object.entries(SIZES)) {
   describe(`drape holds — ${name}`, () => {
     const pattern = generateTrouserBlock(m, fit);
-    const dims = deriveBodyDims(bodyMeasurementsFor(m, bodyType));
-    const t0 = performance.now();
+    const model = createAvatarModel(m, bodyType);
+    const dims = bodyForDrape(model);
     const inst = drapePattern(pattern, dims);
+    // live-edit speed: time a re-drape (the first call also pays for JIT
+    // warm-up and the body's centre-line profile, built once per body)
+    const t0 = performance.now();
+    drapePattern(pattern, dims);
     const ms = performance.now() - t0;
 
     it('four panels, finite, fast', () => {
       expect(inst).toHaveLength(4);
       for (const i of inst) for (const v of i.positions) expect(Number.isFinite(v)).toBe(true);
-      expect(ms).toBeLessThan(150);
+      expect(ms).toBeLessThan(120);
     });
 
     it('no tears (stretch ≤ 2.5× on the body, ≤ 4.5× in the crotch band)', () => {
@@ -54,23 +58,11 @@ for (const [name, [m, fit, bodyType]] of Object.entries(SIZES)) {
       expect(d3(f.map(fk.x - 0.01, fk.y - 0.05), b.map(bk.x + 0.01, bk.y - 0.05))).toBeLessThan(4);
     });
 
-    it('fabric stays outside the body (away from the crotch point)', () => {
-      const torso = torsoProfile(dims), leg = legProfile(dims);
+    it('fabric stays outside the body (checked against the avatar skin)', () => {
       for (const i of inst) {
-        const P = i.positions;
-        let worst = 0;
-        for (let v = 0; v < P.length; v += 3) {
-          const x = P[v], y = P[v + 1], z = P[v + 2];
-          if (y > dims.crotchH + 30 && y < dims.waistH - 5) {
-            const rt = radiusAt(torso, y);
-            worst = Math.max(worst, 1 - Math.hypot(x / (rt * TORSO_X), z / (rt * TORSO_Z)));
-          }
-          if (y < dims.crotchH - 40 && y > dims.ankleH + 50) {
-            const L = legCenterX(dims, y), rl = radiusAt(leg, y) * Math.cos(dims.legSplay) - 1;
-            worst = Math.max(worst, (rl - Math.hypot(x - L, z)) / rl, (rl - Math.hypot(x + L, z)) / rl);
-          }
-        }
-        expect([i.key, i.sx, worst < 0.01]).toEqual([i.key, i.sx, true]);
+        let worst = Infinity;
+        for (let v = 0; v < i.positions.length; v += 3) worst = Math.min(worst, model.sdf(i.positions[v], i.positions[v + 1], i.positions[v + 2]));
+        expect([i.key, i.sx, worst > 0.5]).toEqual([i.key, i.sx, true]);
       }
     });
   });

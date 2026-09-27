@@ -4,6 +4,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createAvatarModel, bodyForDrape } from '../lib/avatar/avatar';
 import { requestAvatarMesh } from '../lib/avatar/meshClient';
 import { drapePattern, solvePatternPoint } from '../lib/drape/drape';
+import { simulateCloth } from '../lib/cloth/clothClient';
+import { CLOTH_MESH } from '../lib/cloth/pbd';
 
 // ─── Body geometry ────────────────────────────────────────────────────────────
 //
@@ -38,11 +40,17 @@ const PANEL_COLORS = { front: 0x3e6a93, back: 0x355d82, free: 0x7a5a9a };
 const HANDLE_COLOR = 0xf0883e;
 const HANDLE_ACTIVE = 0xffd166;
 
-function buildGarment(instances, fabricColor) {
+/**
+ * Meshes for draped instances. `geos[k]` is instance k's geometry (so the cloth
+ * solver can stream new positions into it). The solver's garment is built
+ * without seam lines or drag handles: both belong to the geometric drape.
+ */
+function buildGarment(instances, fabricColor, { seams = true, handles: withHandles = true } = {}) {
   const grp = new THREE.Group();
   grp.name = 'garment';
   const handleGeo = new THREE.SphereGeometry(7, 12, 10);
   const handles = [];
+  const geos = [];
 
   for (let idx = 0; idx < instances.length; idx++) {
     const inst = instances[idx];
@@ -63,13 +71,14 @@ function buildGarment(instances, fabricColor) {
       m.castShadow = true;
       m.userData.fabric = true;
       grp.add(m);
+      geos[idx] = geo;
     }
-    if (inst.seams.length) {
+    if (seams && inst.seams.length) {
       const sg = new THREE.BufferGeometry();
       sg.setAttribute('position', new THREE.BufferAttribute(inst.seams, 3));
       grp.add(new THREE.LineSegments(sg, new THREE.LineBasicMaterial({ color: 0xe6edf3 })));
     }
-    for (const h of inst.handles) {
+    for (const h of withHandles ? inst.handles : []) {
       const hm = new THREE.Mesh(handleGeo, new THREE.MeshBasicMaterial({ color: HANDLE_COLOR }));
       hm.position.set(h.pos[0], h.pos[1], h.pos[2]);
       hm.userData.handle = { pointId: h.pointId, x: h.x, y: h.y, instance: idx };
@@ -78,7 +87,7 @@ function buildGarment(instances, fabricColor) {
       handles.push(hm);
     }
   }
-  return { group: grp, handles };
+  return { group: grp, handles, geos };
 }
 
 // ─── Dispose helper ───────────────────────────────────────────────────────────
@@ -132,6 +141,12 @@ export default function MannequinViewer({
   }, [showHandles]);
 
   const [stats, setStats] = useState({ ms: 0, pieces: 0 });
+  // Cloth simulation (on demand): idle → running → done. A new edit, a new
+  // body or "reset" goes back to the live geometric drape.
+  const [sim, setSim] = useState({ state: 'idle', frame: 0, ms: 0, reason: '' });
+  const [drapeVersion, setDrapeVersion] = useState(0);
+  const simRef = useRef(null);            // { run } of the running simulation
+  const simStatsRef = useRef(null);
   const framedRef = useRef(false);      // true once the user has orbited/zoomed
   const lastBodyTypeRef = useRef(null);
   const bodyDimsRef = useRef(null);
@@ -332,6 +347,7 @@ export default function MannequinViewer({
         return { min: b.min.toArray(), max: b.max.toArray() };
       },
       bodyReady() { return !!bodyRef.current; },
+      simStats() { return simStatsRef.current; },
       /** Front-to-back depth of the body mesh at height y (arms don't affect it). */
       bodyDepthAt(y) {
         let lo = Infinity, hi = -Infinity;
@@ -382,6 +398,8 @@ export default function MannequinViewer({
       disposeObject(scene);
       renderer.dispose();
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
+      simRef.current?.run.cancel();
+      simRef.current = null;
       threeRef.current = null;
       bodyRef.current = null;
       garmentRef.current = null;
@@ -431,6 +449,10 @@ export default function MannequinViewer({
   useEffect(() => {
     const t = threeRef.current;
     if (!t) return;
+    // any edit ends a simulation: the live drape takes over again
+    if (simRef.current) { simRef.current.run.cancel(); simRef.current = null; }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the drape is an external (Three.js) system
+    setSim(s => (s.state === 'idle' ? s : { state: 'idle', frame: 0, ms: 0, reason: '' }));
     const prev = garmentRef.current;
     if (prev) {
       disposeObject(prev.group);
@@ -440,7 +462,7 @@ export default function MannequinViewer({
     const prevInstances = instancesRef.current;
     instancesRef.current = [];
     if (!patternState || !drapeBody) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- the drape is an external (Three.js) system
+       
       setStats({ ms: 0, pieces: 0 });
       return;
     }
@@ -472,7 +494,58 @@ export default function MannequinViewer({
     const ms = performance.now() - t0;
     setStats({ ms, pieces: new Set(instances.map(i => i.key)).size });
    
-  }, [patternState, drapeBody, fabricColor]);
+  }, [patternState, drapeBody, fabricColor, drapeVersion]);
+
+  // ── Cloth simulation (on demand, off the main thread) ───────────────────
+  const startSimulation = useCallback(() => {
+    const t = threeRef.current;
+    if (!t || !patternState || !drapeBody || !measurements || simRef.current) return;
+    let simInstances;
+    try {
+      // the solver drapes at a coarser spacing (fewer particles, same shape)
+      simInstances = drapePattern(patternState, drapeBody, CLOTH_MESH);
+    } catch (err) {
+      console.warn('drape failed', err);
+      return;
+    }
+    const prev = garmentRef.current;
+    if (prev) { disposeObject(prev.group); t.scene.remove(prev.group); }
+    const garment = buildGarment(simInstances, fabricColor, { seams: false, handles: false });
+    t.scene.add(garment.group);
+    garmentRef.current = garment;
+    instancesRef.current = [];
+    simStatsRef.current = null;
+    setSim({ state: 'running', frame: 0, ms: 0, reason: '' });
+
+    const token = {};
+    const live = () => simRef.current && simRef.current.token === token;
+    const run = simulateCloth({
+      measurements, bodyType, instances: simInstances,
+      onFrame(positions, info) {
+        if (!live()) return;
+        info.offsets.forEach((off, k) => {
+          const geo = garment.geos[k];
+          if (!geo) return;
+          const attr = geo.attributes.position;
+          attr.array.set(positions.subarray(off * 3, off * 3 + attr.count * 3));
+          attr.needsUpdate = true;
+          geo.computeVertexNormals();
+          geo.computeBoundingSphere();
+        });
+        setSim(s => ({ ...s, frame: info.frame }));
+      },
+      onDone(info) {
+        if (!live()) return;
+        simRef.current = null;
+        simStatsRef.current = info;
+        setSim({ state: 'done', frame: info.frame, ms: info.ms, reason: info.reason });
+      },
+    });
+    simRef.current = { run, token };
+  }, [patternState, drapeBody, measurements, bodyType, fabricColor]);
+
+  const stopSimulation = useCallback(() => { simRef.current?.run.cancel(); }, []);
+  const resetDrape = useCallback(() => setDrapeVersion(v => v + 1), []);
 
   // ── Camera presets ───────────────────────────────────────────────────────
   const setCameraPreset = useCallback((preset) => {
@@ -506,6 +579,8 @@ export default function MannequinViewer({
       data-drape-pieces={stats.pieces}
       data-body-ready={bodyInfo.ready ? 'true' : 'false'}
       data-body-ms={bodyInfo.ms.toFixed(0)}
+      data-sim-state={sim.state}
+      data-sim-frame={sim.frame}
       style={{ position: 'relative', width: '100%', height: '100%' }}
     >
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
@@ -516,7 +591,9 @@ export default function MannequinViewer({
           color: 'var(--color-text-dim)', background: 'rgba(13,17,23,0.7)', padding: '3px 7px', borderRadius: 4,
           pointerEvents: 'none',
         }}>
-          {stats.pieces} piece{stats.pieces === 1 ? '' : 's'} · drape {stats.ms.toFixed(0)} ms
+          {sim.state === 'idle' && <>{stats.pieces} piece{stats.pieces === 1 ? '' : 's'} · drape {stats.ms.toFixed(0)} ms</>}
+          {sim.state === 'running' && <>simulating · frame {sim.frame}</>}
+          {sim.state === 'done' && <>{sim.reason === 'cancelled' ? 'stopped' : 'settled'} · {sim.frame} frames · {(sim.ms / 1000).toFixed(1)} s</>}
         </div>
       )}
 
@@ -527,13 +604,26 @@ export default function MannequinViewer({
         {PRESETS.map(p => (
           <button key={p} onClick={() => setCameraPreset(p)} style={pill}>{p}</button>
         ))}
-        <button
-          data-testid="toggle-handles"
-          onClick={() => setShowHandles(v => !v)}
-          style={{ ...pill, color: showHandles ? 'var(--color-point)' : 'var(--color-text-dim)' }}
-        >
-          points
-        </button>
+        {sim.state === 'idle' && (
+          <button
+            data-testid="toggle-handles"
+            onClick={() => setShowHandles(v => !v)}
+            style={{ ...pill, color: showHandles ? 'var(--color-point)' : 'var(--color-text-dim)' }}
+          >
+            points
+          </button>
+        )}
+        {stats.pieces > 0 && (
+          <button
+            data-testid="simulate"
+            onClick={sim.state === 'idle' ? startSimulation : sim.state === 'running' ? stopSimulation : resetDrape}
+            title={sim.state === 'idle' ? 'Let the fabric settle under gravity (cloth physics)'
+              : sim.state === 'running' ? 'Stop the simulation here' : 'Back to the live drape'}
+            style={{ ...pill, color: sim.state === 'running' ? 'var(--color-point)' : 'var(--color-accent, #58a6ff)' }}
+          >
+            {sim.state === 'idle' ? 'simulate' : sim.state === 'running' ? 'stop' : 'reset'}
+          </button>
+        )}
       </div>
     </div>
   );

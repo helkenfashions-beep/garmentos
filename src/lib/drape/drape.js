@@ -529,15 +529,16 @@ function freeMapper(piece, dims) {
 
 // ─── Mesh building ───────────────────────────────────────────────────────────
 
-function buildFabricMesh(piece, profile, map, sx) {
+function buildFabricMesh(piece, profile, map, sx, { rowStep = MESH_ROW_STEP, colStep = 15 } = {}) {
   const { table, band } = profile;
-  const cols = clamp(Math.ceil(band.maxW / 15), 8, 48);
+  const cols = clamp(Math.ceil(band.maxW / colStep), 8, 48);
   const rowsY = [];
-  for (let y = table.ymin + 0.02; y < table.ymax; y += MESH_ROW_STEP) rowsY.push(y);
+  for (let y = table.ymin + 0.02; y < table.ymax; y += rowStep) rowsY.push(y);
   rowsY.push(table.ymax - 0.02);
 
   const positions = [];
   const patternXY = [];     // where each mesh point sits on the flat pattern (mm)
+  const sewnXY = [];        // the same with the darts closed (sewn): true fabric distances
   const indices = [];
   let prevStart = -1;
   let vcount = 0;
@@ -550,6 +551,7 @@ function buildFabricMesh(piece, profile, map, sx) {
       const p = map(x, y);
       positions.push(p[0] * sx, p[1], p[2]);
       patternXY.push(x, y);
+      sewnXY.push(closeDarts(x, dartIntervalsAt(piece.darts, y)), y);
       vcount++;
     }
     if (prevStart >= 0) {
@@ -562,7 +564,10 @@ function buildFabricMesh(piece, profile, map, sx) {
     }
     prevStart = start;
   }
-  return { positions: new Float32Array(positions), patternXY: new Float32Array(patternXY), indices: new Uint32Array(indices) };
+  return {
+    positions: new Float32Array(positions), patternXY: new Float32Array(patternXY),
+    sewnXY: new Float32Array(sewnXY), indices: new Uint32Array(indices),
+  };
 }
 
 function offsetOutward(p, sx) {
@@ -607,12 +612,13 @@ function collectHandles(piece) {
 /**
  * Drape every piece of a pattern onto the body.
  * @param pattern {points, segments, pieces}
- * @param dims    from deriveBodyDims()
+ * @param dims    bodyForDrape(avatar model)
+ * @param meshOpts { rowStep, colStep } fabric mesh spacing in mm (coarser for the cloth solver)
  * @returns Array of instances:
  *   { key, name, panel, sx, positions, indices, seams, handles:[{pointId,x,y,pos}], map }
  *   `map(x, y)` returns the body-space position for this instance (mirror applied).
  */
-export function drapePattern(pattern, dims) {
+export function drapePattern(pattern, dims, meshOpts = {}) {
   const pieces = extractPieces(pattern);
   const profiles = new Map(pieces.map(p => [p.key, makeProfile(p)]));
   const instances = [];
@@ -634,14 +640,16 @@ export function drapePattern(pattern, dims) {
     const handles = collectHandles(piece);
     for (const sx of mirrors) {
       const map = (x, y) => { const p = baseMap(x, y); return [p[0] * sx, p[1], p[2]]; };
-      const mesh = buildFabricMesh(piece, profile, baseMap, sx);
+      const mesh = buildFabricMesh(piece, profile, baseMap, sx, meshOpts);
       instances.push({
         key: piece.key,
         name: piece.meta.name ?? piece.key,
         panel: piece.meta.panel ?? 'free',
+        waistY: piece.meta.waistY,          // top of the panel on paper (the cloth solver pins it)
         sx,
         positions: mesh.positions,
         patternXY: mesh.patternXY,
+        sewnXY: mesh.sewnXY,
         indices: mesh.indices,
         seams: buildSeams(piece, baseMap, sx),
         handles: handles.map(h => ({ ...h, pos: map(h.x, h.y) })),

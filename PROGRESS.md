@@ -257,6 +257,28 @@ Benson: "The avatar and 3D mannequin is off." He asked for an anatomically accur
 - Arms are in a fixed A-pose; no hands/fingers detail.
 - Cloth is still geometric; the PBD cloth solver (on-demand) is next.
 
+## Stage 3e — PBD Cloth Solver (on-demand fabric physics)
+Status: COMPLETE (first version)
+Date: September 28 2026
+
+### Why
+Benson asked for Position-Based Dynamics integrated with the avatar's distance field: SDF particle projection every substep, friction and restitution, the solver off the main thread like the avatar mesher, and a collision hierarchy of body first, then cloth-cloth.
+
+### What changed
+- New `src/lib/cloth/` (see CLAUDE.md §3d): solver, frame runner, worker, client.
+- 3D view: "simulate" button → fabric settles under gravity (about 100 frames, ~8 s on a laptop, streamed live); "stop" keeps it where it is; "reset" (or any edit) goes back to the live drape. Orbit keeps working while it runs.
+- Drape instances now carry `sewnXY` (pattern coordinates with darts closed) and `waistY`; `drapePattern()` takes a mesh spacing.
+
+### Tests
+- Unit: 246 (20 new for the solver) — run 3×.
+- E2E: new cloth spec plus split view, touch, offline/files, measurements — Pixel 7 portrait, landscape, desktop — each run 3×.
+
+### Known limitations
+- Self-collision is particle–particle at 15mm spacing: thin folds can still pass between particles.
+- A few particles near the waist on large bodies keep a sub-millimetre flicker; settle detection allows 0.8 mm/frame.
+- One fabric (defaults tuned for cotton drill); the fabric selector / KES values (Stage 11) will set stiffness, friction and damping.
+- The simulated result has no drag handles; edit on the live drape, then simulate again.
+
 ## Stage 4 — Shirt Block Engine
 Status: NOT STARTED
 

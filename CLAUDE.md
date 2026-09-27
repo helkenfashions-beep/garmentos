@@ -114,6 +114,15 @@ The mannequin is one signed-distance body in `src/lib/avatar/` — the same fiel
 - Drape collision: level (horizontal) push out from each row's wrap centre, then a push along the surface normal; fabric rests 3mm off the skin
 - Tests: `avatar.test.js` (girths, height, crotch height, manifold mesh, crotch saddle, outward normals, speed, local morphs) for 5 bodies
 
+## 3d. CLOTH PHYSICS — PBD SOLVER (28 Sep 2026)
+
+On demand ("simulate" in the 3D view), never continuous: the live 2D ⇄ 3D sync stays on the instant geometric drape. Any edit, new body or "reset" returns to the live drape.
+- `src/lib/cloth/pbd.js` — `buildCloth(instances)` turns drape instances into particles (drape mesh at 15mm spacing). Rest lengths come from the FLAT PATTERN with darts sewn (`sewnXY`), so the cloth relaxes to its true size. Panels are sewn where the drape put their edges together (side seams, inseams, CF, CB, crotch). The waistband (top 10mm on paper) is held at its height and softly in place; long-range tethers stop the legs creeping
+- `createClothSim(cloth, body)` — each frame = 12 substeps: predict → stretch/shear, bending, tethers, seams → collisions in priority order: body SDF (projection along ∇d by the penetration depth, position-based Coulomb friction μs 0.6 / μk 0.35) → seams re-closed → cloth-cloth self-collision (spatial hash, 5mm thickness) → body SDF again (body always wins) → velocities with restitution (default 0: no bounce)
+- Stability: rest lengths ramp from draped to pattern over 20 frames, capped corrections, speed clamp, soft compression (fabric buckles), bending 0.2 (below ~0.1 the mesh shivers)
+- `runner.js` (frame loop, settle detection, cancel) is shared by `cloth.worker.js` and the main-thread fallback in `clothClient.js` (`simulateCloth()`); frames stream back as transferred Float32Arrays
+- Tests: `pbd.test.js` (projection exactness, friction, restitution, self-collision, priority, no explosion, trousers settle on 2 bodies: nothing inside, seams closed, stretch < 1.6), `e2e/cloth.spec.js` (worker used, stop, reset, orbit while running, edits cancel)
+
 ---
 
 ## 4. COMPLETE FEATURE MANIFEST
@@ -342,5 +351,5 @@ The mannequin is one signed-distance body in `src/lib/avatar/` — the same fiel
 
 ---
 
-*Last updated: September 2026 (classic trouser block locked as the standard)*
+*Last updated: September 2026 (classic trouser block locked; parametric avatar; PBD cloth solver)*
 *All three research documents should be present in the project directory*

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { legLengths } from '../lib/body/dims';
+import { autoLengths } from '../lib/body/dims';
 
 // Every measurement the trouser block and the 3D body use. Values are shown in
 // cm and stored in mm. `auto` fields may be left empty: the block and the body
@@ -17,6 +17,7 @@ const GROUPS = [
       { key: 'hipToWaist',      label: 'Hip depth',      note: 'waist down to hip line',    min: 10,  max: 40,  auto: 'hipDepth' },
       { key: 'waistToKnee',     label: 'Waist to knee',  note: 'down the side',             min: 30,  max: 90,  auto: 'waistToKnee' },
       { key: 'waistToAnkle',    label: 'Waist to ankle', note: 'trouser length',            min: 50,  max: 140, auto: 'waistToAnkle' },
+      { key: 'inseam',          label: 'Inseam',         note: 'crotch to floor',           min: 40,  max: 120, auto: 'inseam' },
     ],
   },
   {
@@ -25,7 +26,10 @@ const GROUPS = [
       { key: 'height',          label: 'Height',            note: 'total standing',      min: 90, max: 230 },
       { key: 'chest',           label: 'Chest',             note: 'fullest point',       min: 50, max: 200 },
       { key: 'shoulderWidth',   label: 'Shoulder width',    note: 'shoulder to shoulder', min: 25, max: 70 },
-      { key: 'backWaistLength', label: 'Back waist length', note: 'neck to waist, back', min: 25, max: 70 },
+      { key: 'backWaistLength', label: 'Back waist length', note: 'nape to waist, back', min: 25, max: 70, auto: 'backWaistLength' },
+      { key: 'neckGirth',       label: 'Neck',              note: 'around the neck',     min: 20, max: 70 },
+      { key: 'sleeveLength',    label: 'Sleeve length',     note: 'shoulder to wrist',   min: 30, max: 100, auto: 'sleeveLength' },
+      { key: 'bicepGirth',      label: 'Bicep',             note: 'fullest upper arm',   min: 15, max: 70 },
     ],
   },
 ];
@@ -41,7 +45,7 @@ export default function MeasurementPanel({ measurements, onChange, onClose, inli
   });
   const [bad, setBad] = useState({});
 
-  const autos = legLengths(measurements);
+  const autos = autoLengths(measurements);
   const big = inline || drawer;
 
   function handleChange(f, raw) {

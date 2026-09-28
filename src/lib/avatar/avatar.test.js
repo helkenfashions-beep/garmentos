@@ -78,8 +78,11 @@ for (const [name, [m, bodyType]] of Object.entries(SIZES)) {
       }
     });
 
-    it('builds fast enough for live editing', () => {
-      expect(av.ms).toBeLessThan(900);
+    it('builds fast enough for live editing (in the background worker)', () => {
+      // one mesh ≈ 0.2 s; an unlucky grid alignment at the diagonal forearms
+      // costs a rebuild on a shifted grid (see avatar.js), so allow a few
+      expect(av.ms).toBeLessThan(1600);
+      expect(av.attempts).toBeLessThanOrEqual(8);
     });
   });
 }
@@ -120,4 +123,199 @@ describe('measurements deform the body locally (segmented morph)', () => {
     expect(span(wide) - span(base)).toBeGreaterThan(40);
     expect(Math.abs(wide.girths.chest / base.girths.chest - 1)).toBeLessThan(0.01);
   });
+});
+
+// ── tailoring measurements: inseam, neck, sleeve, bicep, back waist length ──
+
+/** Girth of the arm, taped square to the arm at point p (convex hull of ray exits). */
+function armGirth(model, p, dir) {
+  const [dx, dy] = dir; const l = Math.hypot(dx, dy);
+  const ax = [dx / l, dy / l, 0];
+  const u = [-ax[1], ax[0], 0], v = [0, 0, 1];       // two directions square to the arm
+  const pts = [];
+  for (let i = 0; i < 90; i++) {
+    const t = (i / 90) * 2 * Math.PI, c = Math.cos(t), s = Math.sin(t);
+    const w = [u[0] * c + v[0] * s, u[1] * c + v[1] * s, u[2] * c + v[2] * s];
+    let r = 0; while (r < 200 && model.sdf(p.x + w[0] * r, p.y + w[1] * r, p.z + w[2] * r) < 0) r += 0.25;
+    pts.push([c, s, r]);
+  }
+  // near the armpit the arm meets the chest wall; like a tape slipped into the
+  // armpit, take the arm's own radius there (the opposite side's)
+  const rs = pts.map(q => q[2]), med = [...rs].sort((a, b) => a - b)[rs.length >> 1];
+  for (let i = 0; i < pts.length; i++) if (rs[i] > med * 1.3) pts[i][2] = rs[(i + 45) % 90];
+  for (const q of pts) { q[0] *= q[2]; q[1] *= q[2]; }
+  let per = 0; for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length]; per += Math.hypot(a[0] - b[0], a[1] - b[1]); }
+  return per;
+}
+
+describe('tailoring measurements drive the body', () => {
+  const base = createAvatar(M, 'male_adult', { spacing: SPACING }).model;
+
+  it('inseam (crotch → floor) puts the crotch at that height and the waist one body rise above', () => {
+    const md = createAvatar({ ...M, inseam: 800 }, 'male_adult', { spacing: SPACING }).model;
+    expect(md.crotchPoint[1]).toBeCloseTo(800, 0);
+    expect(md.dims.waistH).toBe(800 + M.bodyRise);
+    expect(md.lengths.inseam).toBe(800);
+    // unmeasured, the inseam follows from height and body rise
+    expect(base.lengths.inseam).toBeCloseTo(base.dims.waistH - M.bodyRise, 6);
+    // girths unaffected
+    for (const k of ['chest', 'waist', 'hip']) expect(Math.abs(md.girths[k] / base.girths[k] - 1)).toBeLessThan(0.01);
+  });
+
+  it('neck circumference is matched (tape, ±2%) and only moves the neck', () => {
+    expect(Math.abs(base.girths.neck / M.neckGirth - 1)).toBeLessThan(0.02);
+    const thick = createAvatar({ ...M, neckGirth: 440 }, 'male_adult', { spacing: SPACING }).model;
+    expect(Math.abs(thick.girths.neck / 440 - 1)).toBeLessThan(0.02);
+    expect(Math.abs(thick.girths.chest / base.girths.chest - 1)).toBeLessThan(0.005);
+  });
+
+  it('sleeve length is laid along the arm: shoulder point → elbow → wrist', () => {
+    const lm = base.landmarks, [sxp, syp] = lm.shoulderPoint;
+    const [, , elbow, , wrist] = lm.arm;
+    const dir = lm.armDir, l = Math.hypot(...dir), ux = dir[0] / l, uy = dir[1] / l;
+    // distance along the arm from where the shoulder point projects onto it
+    const alongArm = (p) => (p.x - sxp) * ux + (p.y - syp) * uy;
+    const S = base.dims.sleeve;                      // automatic: 36.5% of height
+    expect(S).toBeCloseTo(M.height * 0.365, 6);
+    expect(alongArm(wrist)).toBeCloseTo(S, 0);
+    expect(alongArm(elbow) / S).toBeCloseTo(0.56, 2);
+    // measured, it is laid out exactly
+    const m650 = createAvatar({ ...M, sleeveLength: 650 }, 'male_adult', { spacing: SPACING }).model;
+    const u = m650.landmarks, l2 = Math.hypot(...u.armDir);
+    expect((u.arm[4].x - u.shoulderPoint[0]) * u.armDir[0] / l2 + (u.arm[4].y - u.shoulderPoint[1]) * u.armDir[1] / l2).toBeCloseTo(650, 0);
+    // a longer sleeve moves the wrist down the arm, nothing else
+    const long = createAvatar({ ...M, sleeveLength: S + 60 }, 'male_adult', { spacing: SPACING }).model;
+    expect(base.landmarks.arm[4].y - long.landmarks.arm[4].y).toBeGreaterThan(50);
+    expect(Math.abs(long.girths.chest / base.girths.chest - 1)).toBeLessThan(0.005);
+  });
+
+  it('bicep girth is the girth of the upper arm, taped square to the arm (±3%)', () => {
+    for (const g of [300, 330, 400]) {
+      const md = g === 330 ? base : createAvatar({ ...M, bicepGirth: g }, 'male_adult', { spacing: SPACING }).model;
+      const got = armGirth(md, md.landmarks.arm[1], md.landmarks.armDir);
+      expect([g, Math.abs(got / g - 1) < 0.03]).toEqual([g, true]);
+    }
+  });
+
+  it('old saved files: upperArmGirth is read as the bicep girth', async () => {
+    const { normalizeMeasurements } = await import('../../hooks/useMeasurements.js');
+    expect(normalizeMeasurements({ upperArmGirth: 360 })).toEqual({ bicepGirth: 360 });
+    expect(normalizeMeasurements({ upperArmGirth: 360, bicepGirth: 310 })).toEqual({ bicepGirth: 310 });
+    const md = createAvatar({ ...M, bicepGirth: undefined, upperArmGirth: 380 }, 'male_adult', { spacing: SPACING }).model;
+    expect(Math.abs(armGirth(md, md.landmarks.arm[1], md.landmarks.armDir) / 380 - 1)).toBeLessThan(0.03);
+  });
+
+  it('back waist length (nape → waist) sets the length of the torso', () => {
+    // automatic: nape at 86.3% of height, waist at 61.5%
+    expect(base.dims.napeH - base.dims.waistH).toBeCloseTo(M.height * (0.863 - 0.615), 6);
+    // measured: the nape stays, the waist moves (a longer back = a lower waist)
+    const bwl = base.dims.napeH - base.dims.waistH;
+    const long = createAvatar({ ...M, backWaistLength: bwl + 30 }, 'male_adult', { spacing: SPACING }).model;
+    expect(long.dims.napeH).toBeCloseTo(base.dims.napeH, 6);
+    expect(long.dims.waistH - base.dims.waistH).toBeCloseTo(-30, 6);
+    // the body follows: waist girth taped at the new waist, crotch one rise below it
+    expect(Math.abs(long.girths.waist / M.waist - 1)).toBeLessThan(0.015);
+    expect(long.crotchPoint[1]).toBeCloseTo(long.dims.waistH - M.bodyRise, 0);
+    // …and the trouser lengths follow from the new waist
+    expect(long.lengths.waistToAnkle - base.lengths.waistToAnkle).toBeCloseTo(-30, 6);
+    // with the inseam measured as well, the waist is fixed and the nape moves instead
+    const both = createAvatar({ ...M, inseam: 800, backWaistLength: 460 }, 'male_adult', { spacing: SPACING }).model;
+    expect(both.dims.waistH).toBe(800 + M.bodyRise);
+    expect(both.dims.napeH - both.dims.waistH).toBe(460);
+  });
+
+  it('old saved files: the untouched old defaults (back 44 cm, sleeve 65 cm) go back to automatic', async () => {
+    const { normalizeMeasurements } = await import('../../hooks/useMeasurements.js');
+    expect(normalizeMeasurements({ backWaistLength: 440, sleeveLength: 650, chest: 1000 })).toEqual({ chest: 1000 });
+    expect(normalizeMeasurements({ backWaistLength: 452, sleeveLength: 640 })).toEqual({ backWaistLength: 452, sleeveLength: 640 });
+  });
+});
+
+// ── anatomy: spine curve, front/back asymmetry, shoulder slope, armpit ──────
+
+/** Front and back of the body on the centre line at height y. */
+function sagittal(model, y) {
+  let front = null, back = null;
+  for (let z = 320; z > -320; z -= 0.5) if (model.sdf(0, y, z) < 0) { front = z; break; }
+  for (let z = -320; z < 320; z += 0.5) if (model.sdf(0, y, z) < 0) { back = z; break; }
+  return { front, back };
+}
+
+describe('anatomy', () => {
+  for (const bt of ['male_adult', 'female_adult']) {
+    const md = createAvatar(M, bt, { spacing: SPACING }).model, d = md.dims;
+    const underarmY = d.chestH + (d.shoulderH - d.chestH) * 0.55;
+
+    it(`${bt}: the back follows an S-curve — lumbar hollow at the waist, rounded upper back, seat behind`, () => {
+      const seat = sagittal(md, d.seatH).back, waist = sagittal(md, d.waistH).back, upper = sagittal(md, underarmY).back;
+      expect(waist - seat).toBeGreaterThan(25);     // lordosis: the waist sits well forward of the seat
+      expect(waist - upper).toBeGreaterThan(15);    // kyphosis: the shoulder blades sit behind the waist
+    });
+
+    it(`${bt}: cross-sections are not symmetric front to back`, () => {
+      const at = (y) => { const s = sagittal(md, y), spine = md.torsoSection(y).spineZ; return { f: s.front - spine, b: spine - s.back }; };
+      const seat = at(d.seatH);
+      expect(seat.b).toBeGreaterThan(seat.f * 1.15);   // buttocks: more depth behind
+      const chest = at(d.chestH);
+      expect(chest.f).toBeGreaterThan(chest.b);        // ribcage / bust: more depth in front
+    });
+
+    it(`${bt}: shoulders slope down from the neck (15°–30°) into a rounded deltoid`, () => {
+      const topAt = (x) => { let y = d.H; while (md.sdf(x, y, -8) > 0 && y > 0) y -= 0.5; return y; };
+      const x0 = d.neckR * 2.1, x1 = md.landmarks.shoulderPoint[0] - 25;
+      const deg = Math.atan2(topAt(x0) - topAt(x1), x1 - x0) * 180 / Math.PI;
+      expect(deg).toBeGreaterThan(15);
+      expect(deg).toBeLessThan(30);
+      // the deltoid rounds past the shoulder point
+      let xOut = 0; while (md.sdf(xOut, d.shoulderH - 60, -4) < 0 && xOut < 500) xOut += 0.5;
+      expect(xOut).toBeGreaterThan(md.landmarks.shoulderPoint[0]);
+    });
+
+    it(`${bt}: the armpit is a smooth fold, and below it the arm hangs free of the torso`, () => {
+      // below the armpit there is air between arm and torso
+      const y = underarmY - 140;
+      const arm = md.landmarks.arm, t = (arm[0].y - y) / (arm[0].y - arm[2].y);
+      const armX = arm[0].x + (arm[2].x - arm[0].x) * t;
+      let torsoX = 0; while (md.sdf(torsoX, y, 0, { arms: false }) < 0 && torsoX < 400) torsoX += 0.5;
+      // …and the field between them is open (no web of skin)
+      const midX = (torsoX + armX - arm[1].r) / 2;
+      expect(md.sdf(midX, y, 0)).toBeGreaterThan(0);
+      // at the armpit the blend fills the corner (no sharp crease): trace the
+      // vault of the armpit from the gap below — the surface normal turns
+      // gradually from the chest wall, over the top, down the arm
+      const ns = [];
+      for (let x = torsoX + 2; x < armX - arm[1].r - 2; x += 3) {
+        let yy = y; while (md.sdf(x, yy, 0) > 0 && yy < y + 300) yy += 0.5;
+        ns.push(md.normal(x, yy - 0.5, 0));
+      }
+      expect(ns.length).toBeGreaterThan(3);
+      for (let i = 1; i < ns.length; i++) {
+        const dot = ns[i][0] * ns[i - 1][0] + ns[i][1] * ns[i - 1][1] + ns[i][2] * ns[i - 1][2];
+        expect(dot).toBeGreaterThan(0.5);             // never turns more than 60° in 3 mm
+      }
+    });
+  }
+});
+
+// ── manifold integrity across the new measurements ──────────────────────────
+
+describe('mesh stays a closed manifold whatever the tailoring measurements', () => {
+  const bodies = {
+    'short, broad': { ...M, height: 1550, chest: 1150, waist: 1010, hip: 1150, seat: 1170, shoulderWidth: 470 },
+    'tall, slim, long inseam': { ...M, height: 1950, chest: 880, waist: 740, hip: 880, seat: 900, upperThighGirth: 500, kneeGirth: 360, inseam: 920 },
+    'long sleeves, thick biceps': { ...M, sleeveLength: 720, bicepGirth: 420 },
+    'short sleeves, thin arms': { ...M, sleeveLength: 560, bicepGirth: 250, wristGirth: 150 },
+    'thick neck, long back': { ...M, neckGirth: 460, backWaistLength: 480 },
+    'short back': { ...M, backWaistLength: 390 },
+    'everything measured': { ...M, inseam: 820, backWaistLength: 450, sleeveLength: 640, bicepGirth: 350, neckGirth: 400 },
+  };
+  for (const [name, m] of Object.entries(bodies)) {
+    it(name, () => {
+      const av = createAvatar(m, 'male_adult', { spacing: SPACING });
+      expect(meshTopology(av.mesh.indices)).toMatchObject({ boundary: 0, nonManifold: 0, degenerate: 0 });
+      // and the tape measurements still hold
+      for (const k of ['chest', 'waist', 'hip']) expect([k, Math.abs(av.model.girths[k] / m[k] - 1) < 0.015]).toEqual([k, true]);
+      expect(Math.abs(av.model.girths.neck / m.neckGirth - 1)).toBeLessThan(0.02);
+    });
+  }
 });

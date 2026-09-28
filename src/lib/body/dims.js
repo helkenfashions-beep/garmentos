@@ -14,11 +14,36 @@ export const WAIST_HEIGHT_RATIO = 0.615;
 export const KNEE_HEIGHT_RATIO  = 0.286;
 export const ANKLE_HEIGHT_RATIO = 0.054;
 export const HIP_DEPTH_DEFAULT  = 200;   // natural waist → hip line, mm
+export const NAPE_HEIGHT_RATIO  = 0.863; // back neck point (C7) — nearly constant with height
+export const SLEEVE_RATIO       = 0.365; // shoulder point → wrist
 
 // The torso is an oval, not a circle: wider side-to-side than front-to-back
 // (same girth). A round torso makes the seat far too deep for any crotch curve.
 export const TORSO_X = 1.12;
 export const TORSO_Z = 0.87;
+
+/**
+ * Height of the natural waist above the floor.
+ *   – a measured inseam (crotch → floor) fixes it: waist = inseam + body rise;
+ *   – else a measured back waist length (nape → waist) does: the nape sits at
+ *     a near-constant share of height, so a longer back means a lower waist;
+ *   – else a proportion of height.
+ */
+export function waistHeight(m) {
+  const H = m.height;
+  if (m.inseam != null && m.bodyRise != null) return m.inseam + m.bodyRise;
+  if (m.backWaistLength != null) {
+    return Math.min(H * 0.70, Math.max(H * 0.52, H * NAPE_HEIGHT_RATIO - m.backWaistLength));
+  }
+  return H * WAIST_HEIGHT_RATIO;
+}
+
+/** Height of the nape (C7). Only moves off its proportion when both the
+ *  inseam and the back waist length are measured (then waist + back length). */
+export function napeHeight(m, waistH = waistHeight(m)) {
+  if (m.inseam != null && m.backWaistLength != null) return waistH + m.backWaistLength;
+  return m.height * NAPE_HEIGHT_RATIO;
+}
 
 /**
  * Vertical trouser lengths, measured down from the natural waist (mm).
@@ -28,12 +53,31 @@ export const TORSO_Z = 0.87;
  */
 export function legLengths(m) {
   const H = m.height;
-  const waistH = H * WAIST_HEIGHT_RATIO;
+  const waistH = waistHeight(m);
   const hipDepth     = m.hipToWaist   ?? HIP_DEPTH_DEFAULT;
   const waistToKnee  = m.waistToKnee  ?? (waistH - H * KNEE_HEIGHT_RATIO);
   const waistToAnkle = m.waistToAnkle ?? (waistH - H * ANKLE_HEIGHT_RATIO);
-  return { hipDepth, waistToKnee, waistToAnkle };
+  // inseam: crotch to floor (shown as the automatic value when not measured)
+  const inseam       = m.inseam       ?? (waistH - (m.bodyRise ?? 0));
+  return { hipDepth, waistToKnee, waistToAnkle, inseam };
 }
+
+/** Every length that is worked out when not measured — shown as hints. */
+export function autoLengths(m) {
+  const waistH = waistHeight(m);
+  return {
+    ...legLengths(m),
+    backWaistLength: m.backWaistLength ?? (napeHeight(m, waistH) - waistH),
+    sleeveLength:    m.sleeveLength    ?? m.height * SLEEVE_RATIO,
+  };
+}
+
+// Upper-body proportions used when a length has not been measured directly
+export const SHOULDER_SLOPE = 20 * Math.PI / 180;   // neck base → shoulder point
+export const UPPER_ARM_FRACTION = 0.56;             // shoulder→elbow share of the sleeve length
+export const NECK_BASE_WIDTH = 1.45;                // half-width at the side neck points, × neck radius
+/** Bicep girth (the key was called upperArmGirth before; both are read). */
+export const bicepGirthOf = (m) => m.bicepGirth ?? m.upperArmGirth ?? m.chest * 0.33;
 
 export function deriveBodyDims(m) {
   const H = m.height;
@@ -47,16 +91,21 @@ export function deriveBodyDims(m) {
   const thighR    = m.upperThighGirth / TAU;
   const kneeR     = m.kneeGirth       / TAU;
   const calfR     = m.calfGirth       / TAU;
-  const upperArmR = m.upperArmGirth   / TAU;
+  const upperArmR = bicepGirthOf(m)   / TAU;     // bicep
   const wristR    = m.wristGirth      / TAU;
   const ankleR    = calfR * 0.66;
 
   const headR     = H * 0.065;
   const headCtrH  = H - headR;
   const neckTopH  = H - headR * 1.85;
-  const shoulderH = H * 0.844;
-  const chestH    = H * 0.756;
-  const waistH    = H * WAIST_HEIGHT_RATIO;
+  const waistH    = waistHeight(m);
+  // The nape (C7) — see waistHeight/napeHeight for how the back waist length
+  // and inseam place it; the shoulder points sit below it on a natural ~20°
+  // shoulder slope. (Never above the top of the neck.)
+  const napeH     = Math.min(neckTopH, Math.max(waistH + 200, napeHeight(m, waistH)));
+  const neckBaseHalf = neckR * NECK_BASE_WIDTH;
+  const shoulderH = napeH - Math.max(0, m.shoulderWidth / 2 - neckBaseHalf) * Math.tan(SHOULDER_SLOPE);
+  const chestH    = lerp(waistH, shoulderH, 0.62);
   const L         = legLengths(m);
   const crotchH   = waistH - m.bodyRise;
   // hip, knee and ankle follow the trouser measurements (kept in a sane order)
@@ -65,8 +114,13 @@ export function deriveBodyDims(m) {
   const kneeH     = Math.min(crotchH - 100, Math.max(H * 0.18, waistH - L.waistToKnee));
   const ankleH    = Math.min(kneeH - 150, Math.max(20, waistH - L.waistToAnkle));
   const calfH     = lerp(ankleH, kneeH, 0.54);
-  const elbowH    = H * 0.630;
-  const wristH    = H * 0.420;
+  // Sleeve length (shoulder point → wrist, arm hanging) sets elbow and wrist.
+  // Heights here assume the arm hangs ~10° out; body.js lays the exact lengths
+  // along the arm it builds.
+  const sleeve    = m.sleeveLength ?? H * SLEEVE_RATIO;
+  const armCos    = Math.cos(10 * Math.PI / 180);
+  const elbowH    = shoulderH - sleeve * UPPER_ARM_FRACTION * armCos;
+  const wristH    = shoulderH - sleeve * armCos;
 
   // thighs sit side by side with a small gap below the crotch (like a CLO
   // avatar); the crotch itself is a rounded saddle blended over the gap
@@ -77,7 +131,7 @@ export function deriveBodyDims(m) {
   const armSpacing = m.shoulderWidth / 2;
 
   return {
-    H, headR, headCtrH, neckTopH, shoulderH, chestH,
+    H, headR, headCtrH, neckTopH, napeH, shoulderH, chestH, sleeve,
     waistH, hipH, seatH, crotchH, kneeH, calfH, ankleH, elbowH, wristH,
     neckR, chestR, waistR, hipR, seatR, thighR, kneeR, calfR, ankleR,
     upperArmR, wristR, legSpacing, armSpacing, legSplay,

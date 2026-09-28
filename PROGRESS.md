@@ -279,6 +279,27 @@ Benson asked for Position-Based Dynamics integrated with the avatar's distance f
 - One fabric (defaults tuned for cotton drill); the fabric selector / KES values (Stage 11) will set stiffness, friction and damping.
 - The simulated result has no drag handles; edit on the live drape, then simulate again.
 
+## Stage 3f — Avatar Anatomy + Tailoring Measurements
+Status: COMPLETE
+Date: September 28 2026
+
+### Why
+Benson asked for more anatomical realism: the missing tailoring measurements (inseam, neck, sleeve length, bicep, back waist length), a natural spinal curve, asymmetric front/back torso sections, a natural shoulder slope and armpit, with the mesh kept manifold.
+
+### What changed
+- Measurements: inseam, neck, sleeve length and bicep are new fields in the measurements panel (Trouser: inseam; Body: neck, sleeve length, bicep). Inseam, back waist length and sleeve length are automatic (worked out from height, shown as hints) until measured. `upperArmGirth` is now `bicepGirth` (old files still open; the old unused defaults for back length and sleeve go back to automatic).
+- Body (see CLAUDE.md §3c): spine S-curve, front/back depths per section, straight 20° shoulder line into a deltoid, armpit fold with the arm clear of the ribcage below it, sleeve-length arm (shoulder → elbow 56%), bicep and neck taped and calibrated, cranium + jaw head, narrower neck base.
+- Arms hang further out (A-pose ~18–33° depending on build) so the upper arm clears the chest.
+
+### Tests
+- Unit: 269 (avatar 61: new measurements, spine curve, asymmetry, shoulder slope, armpit smoothness, manifold sweep over 7 extra bodies) — run 3×.
+- E2E: all specs on Pixel 7 portrait, landscape and desktop — run 3×.
+
+### Known limitations
+- The mesh sometimes needs several grid tries at the forearms (surface nets + thin diagonal parts); building stays in the background worker.
+- A soft crease remains at the groin and a faint one at the neck base.
+- No hands/fingers detail, no face.
+
 ## Stage 4 — Shirt Block Engine
 Status: NOT STARTED
 

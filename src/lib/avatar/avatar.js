@@ -19,19 +19,22 @@ export function createAvatar(measurements, bodyType = 'male_adult', { spacing = 
   const t0 = (typeof performance !== 'undefined' ? performance : Date).now();
   const m = bodyMeasurementsFor(measurements, bodyType);
   const model = createBodyModel(m, bodyType);
-  // Surface nets can, in rare grid alignments, join two quads along one edge
-  // (a non-manifold edge — seen only at wrists). The shape is fine; the grid
-  // sampling is unlucky. Check every mesh and, if needed, rebuild on a grid
-  // shifted by a fraction of a cell.
-  const OFFSETS = [[0, 0, 0], [0.37, 0.29, 0.41], [0.61, 0.13, 0.77], [0.19, 0.53, 0.23], [0.83, 0.71, 0.47]];
+  // Surface nets puts one vertex per grid cell, so where a part is only a few
+  // cells thick AND runs diagonally across the grid (the hands and forearms
+  // of the A-pose), an unlucky grid alignment can join two quads along one
+  // edge — a non-manifold edge. The shape is fine; the sampling is unlucky.
+  // Check every mesh and, if needed, rebuild on a grid shifted by a fraction
+  // of a cell; as a last resort, on a slightly finer grid.
+  const OFFSETS = [[0, 0, 0], [0.61, 0.13, 0.77], [0.37, 0.29, 0.41], [0.19, 0.53, 0.23], [0.83, 0.71, 0.47], [0.47, 0.89, 0.11], [0.29, 0.07, 0.61], [0.73, 0.41, 0.93]];
+  const tries = [...OFFSETS.map(o => [o, spacing]), [[0.5, 0.5, 0.5], spacing * 0.85], [[0.13, 0.37, 0.71], spacing * 0.85]];
   let mesh = null, topology = null, attempts = 0;
-  for (const [ox, oy, oz] of OFFSETS) {
+  for (const [[ox, oy, oz], h] of tries) {
     attempts++;
     const b = {
-      min: [model.bounds.min[0] - ox * spacing, model.bounds.min[1] - oy * spacing, model.bounds.min[2] - oz * spacing],
+      min: [model.bounds.min[0] - ox * h, model.bounds.min[1] - oy * h, model.bounds.min[2] - oz * h],
       max: model.bounds.max,
     };
-    const candidate = polygonize(model.sdf, b, spacing, { snapSteps: 2 });
+    const candidate = polygonize(model.sdf, b, h, { snapSteps: 2 });
     const topo = meshTopology(candidate.indices);
     if (!mesh || topo.nonManifold + topo.boundary < topology.nonManifold + topology.boundary) { mesh = candidate; topology = topo; }
     if (topo.nonManifold === 0 && topo.boundary === 0 && topo.degenerate === 0) break;

@@ -27,7 +27,7 @@
  * and moves the crotch until waist-to-crotch equals the body rise.
  */
 
-import { deriveBodyDims, legCenterX, legLengths } from '../body/dims.js';
+import { deriveBodyDims, legCenterX, legLengths, UPPER_ARM_FRACTION, SHOULDER_SLOPE, NECK_BASE_WIDTH } from '../body/dims.js';
 import { smin, sdRoundCone, sdEllipsoid, sdEllipse2, ellipsePerimeter, monotoneCurve } from './sdf.js';
 
 const FAR = 1e6;
@@ -37,22 +37,51 @@ const FAR = 1e6;
 // under steeply into the gluteal fold.
 const CAP_FRACTION = {
   cap0: { a: 0.08, f: 0.18, b: 0.05 },
-  cap1: { a: 0.55, f: 0.72, b: 0.42 },
-  cap2: { a: 0.86, f: 0.93, b: 0.80 },
+  cap1: { a: 0.55, f: 0.72, b: 0.50 },
+  cap2: { a: 0.86, f: 0.93, b: 0.86 },
 };
 
-// Cross-section shape (width : depth) per torso level, and forward offset of
-// the section centre (mm, + = forward). Chests and hips are wider than deep.
+// Torso cross-sections. Per level:
+//   aspect — width : depth (chests and hips are wider than deep)
+//   spine  — forward offset of the section's widest line (mm, + = forward).
+//            Down the body these trace the S of the spine: the thoracic
+//            curve (kyphosis) carries the upper back and shoulders back, the
+//            lumbar curve (lordosis) brings the waist forward, and the pelvis
+//            tips the seat back again.
+//   fb     — front/back split of the depth: + puts more of it in front
+//            (ribcage, bust, belly), − behind (shoulder blades, buttocks).
+//            front depth = b·(1 + fb), back depth = b·(1 − fb).
+// Girths are calibrated afterwards, so these set the SHAPE only.
 const SHAPES = {
-  male:   { chest: [1.32, 6],  waist: [1.28, 4], hip: [1.26, -6], seat: [1.20, -12] },
-  female: { chest: [1.18, 14], waist: [1.30, 2], hip: [1.34, -8], seat: [1.22, -18] },
+  male: {
+    seat:     { aspect: 1.20, spine: -10, fb: -0.16 },
+    hip:      { aspect: 1.26, spine: -4,  fb: -0.06 },
+    waist:    { aspect: 1.28, spine: 8,   fb: 0.04 },
+    chest:    { aspect: 1.32, spine: 2,   fb: 0.08 },
+    underarm: { spine: -8,  fb: -0.10 },
+    shoulder: { spine: -16, fb: -0.12 },
+    neckbase: { spine: -14 },
+    necktop:  { spine: -2 },
+  },
+  female: {
+    seat:     { aspect: 1.22, spine: -18, fb: -0.18 },
+    hip:      { aspect: 1.34, spine: -6,  fb: -0.10 },
+    waist:    { aspect: 1.30, spine: 12,  fb: 0.06 },
+    chest:    { aspect: 1.18, spine: 6,   fb: 0.18 },
+    underarm: { spine: -6,  fb: -0.02 },
+    shoulder: { spine: -14, fb: -0.10 },
+    neckbase: { spine: -12 },
+    necktop:  { spine: 0 },
+  },
 };
 
 // Blend radii (mm) where parts meet
 const K_CROTCH = 34;   // torso ↔ thighs: the rounded crotch saddle
 const K_LEG    = 0;    // along a leg: segments share end spheres, so a plain union is already smooth (a blend would add a ring)
-const K_ARM    = 16;   // shoulder
-const K_NECK   = 26;
+const K_ARM    = 10;   // arm ↔ torso below the armpit (the arm hangs clear)
+const K_AXILLA = 34;   // …widening to this at the armpit: a smooth axillary fold
+const K_DELT   = 22;   // deltoid ↔ upper arm
+const K_NECK   = 40;
 const K_HEAD   = 20;
 const K_FOOT   = 18;
 
@@ -68,13 +97,44 @@ function buildRig(m, bodyType) {
   const female = bodyType?.includes('female');
   const shape = female ? SHAPES.female : SHAPES.male;
   const seatG = m.seat ?? m.hip + 20;
+  const rB = d.upperArmR;                     // bicep radius
 
-  // Torso keyframes (y up). Each level has a girth target (null = shape only).
-  const lv = (y, girth, aspect, cz, key) => ({ y, girth, aspect, cz, key, scale: 1, a: 0, b: 0 });
+  // Torso keyframes (y up). Girth levels get their oval from the girth; the
+  // others are shaped from the neighbouring levels.
+  const lv = (y, girth, key) => {
+    const sh = shape[key];
+    const ax = axesForGirth(girth, sh.aspect);
+    return { y, girth, key, scale: 1, a: ax.a, b: ax.b, bf: ax.b * (1 + sh.fb), bb: ax.b * (1 - sh.fb), cz: sh.spine };
+  };
+  const fixed = (y, a, b, key) => {
+    const sh = shape[key] ?? {}, fb = sh.fb ?? 0;
+    return { y, key, scale: 1, fixed: true, a, b, bf: b * (1 + fb), bb: b * (1 - fb), cz: sh.spine ?? 0 };
+  };
   const shoulderHalf = m.shoulderWidth / 2;
   const underArmY = d.chestH + (d.shoulderH - d.chestH) * 0.55;
-  const neckBaseY = d.shoulderH + (d.neckTopH - d.shoulderH) * 0.35;
-  const chestAx = axesForGirth(m.chest, shape.chest[0]);
+  const chestAx = axesForGirth(m.chest, shape.chest.aspect);
+  // the neck: from its base at the nape (C7) up toward the chin
+  // (always at least 40 mm of neck above the nape, whatever the lengths)
+  const neckTopY = Math.max(d.napeH + 60, d.neckTopH - 25);
+
+  function shoulderLine() {
+    const aS = shoulderHalf - rB * 0.9, aN = d.neckR * NECK_BASE_WIDTH;
+    const tan = Math.tan(SHOULDER_SLOPE);
+    const yS = Math.min(d.napeH - 8, d.shoulderH + Math.max(0, shoulderHalf - aS) * tan);
+    const bS = chestAx.b * 0.62, bN = d.neckR * 1.3;
+    // a few keys along the line keep the loft from bulging between them
+    const out = [fixed(yS, aS, bS, 'shoulder')];
+    for (const k of [1, 2, 3]) {
+      const t = k / 4, y = yS + (d.napeH - yS) * t;
+      if (y > yS + 2 && y < d.napeH - 2) {
+        const key = fixed(y, aS + (aN - aS) * t, bS + (bN - bS) * t, 'shoulder');
+        // the front falls away toward the collarbones faster than the back
+        key.bf = key.bf + (d.neckR * 0.95 - key.bf) * Math.min(1, t * 1.4);
+        out.push({ ...key, key: `trap${k}`, cz: (shape.shoulder.spine * (1 - t) + shape.neckbase.spine * t) });
+      }
+    }
+    return out;
+  }
 
   // rounded bottom of the torso, spaced in proportion to the crotch→seat
   // distance (short on bodies whose hip line sits close to the crotch);
@@ -84,16 +144,20 @@ function buildRig(m, bodyType) {
     { y: d.crotchH + capSpan * 0.04, a: 4,               b: 4,               cz: -6,  key: 'cap0', scale: 1, fixed: true },
     { y: d.crotchH + capSpan * 0.30, a: d.thighR * 0.62, b: d.thighR * 0.62, cz: -8,  key: 'cap1', scale: 1, fixed: true },
     { y: d.crotchH + capSpan * 0.66, a: d.thighR * 1.00, b: d.thighR * 0.90, cz: -10, key: 'cap2', scale: 1, fixed: true },
-    lv(d.seatH,  seatG,   shape.seat[0],  shape.seat[1],  'seat'),
-    lv(d.hipH,   m.hip,   shape.hip[0],   shape.hip[1],   'hip'),
-    lv(d.waistH, m.waist, shape.waist[0], shape.waist[1], 'waist'),
-    lv(d.chestH, m.chest, shape.chest[0], shape.chest[1], 'chest'),
-    { y: underArmY, a: Math.max(chestAx.a * 0.98, shoulderHalf - d.upperArmR * 1.6), b: chestAx.b * 0.9, cz: shape.chest[1] * 0.5, key: 'underarm', scale: 1, fixed: true },
-    { y: d.shoulderH, a: shoulderHalf - d.upperArmR * 0.9, b: chestAx.b * 0.62, cz: -4, key: 'shoulder', scale: 1, fixed: true },
-    { y: neckBaseY, a: d.neckR * 1.9, b: d.neckR * 1.35, cz: -6, key: 'neckbase', scale: 1, fixed: true },
-    { y: d.neckTopH - 25, a: d.neckR * 1.05, b: d.neckR * 1.05, cz: -4, key: 'necktop', scale: 1, fixed: true },
+    lv(d.seatH,  seatG,   'seat'),
+    lv(d.hipH,   m.hip,   'hip'),
+    lv(d.waistH, m.waist, 'waist'),
+    lv(d.chestH, m.chest, 'chest'),
+    fixed(underArmY, Math.max(chestAx.a * 0.98, shoulderHalf - rB * 1.6), chestAx.b * 0.9, 'underarm'),
+    // the top of the shoulders: a straight line sloping down from the neck
+    // base to the shoulder point (the deltoid carries it the last few cm)
+    ...shoulderLine(),
+    // neck base: wide across the trapezius, deep behind (the nape), shallow
+    // in front — the front of the neck starts low, at the collarbones
+    { ...fixed(d.napeH, d.neckR * NECK_BASE_WIDTH, d.neckR * 1.3, 'neckbase'), bf: d.neckR * 0.95 },
+    // top of the torso loft sits just inside the neck, so it never shows as a lip
+    fixed(neckTopY, d.neckR * 0.9, d.neckR * 0.9, 'necktop'),
   ];
-  for (const L of levels) if (!L.fixed) { const ax = axesForGirth(L.girth, L.aspect); L.a = ax.a; L.b = ax.b; }
 
   // Leg chain (right leg; the left leg is the mirror). Radii scale with girths.
   const legY = {
@@ -117,35 +181,54 @@ function buildRig(m, bodyType) {
     ],
   };
 
-  // Arms: A-pose, opened just enough that the hands hang at least 35 mm clear
-  // of the widest part of the hips and thighs (clean mesh; garments fit)
-  const sx = shoulderHalf - d.upperArmR * 0.85;
-  const sy = d.shoulderH - d.upperArmR * 1.1;
-  const hipHalf = Math.max(axesForGirth(Math.max(m.hip, seatG), shape.hip[0]).a, d.legSpacing + d.thighR) + 12;
-  // check the clearance where the arm passes the hip line AND at the wrist
-  const forearmR = d.upperArmR * 0.76;
+  // ── Arms ─────────────────────────────────────────────────────────────────
+  // The shoulder joint sits just inside the shoulder point. The arm hangs in
+  // an A-pose opened just enough that forearm and hand clear the hips and
+  // thighs by 35 mm. Along the arm, the SLEEVE LENGTH is laid out exactly:
+  // shoulder → elbow = 56%, elbow → wrist = the rest.
+  const sx = shoulderHalf - rB * 0.7;
+  const sy = d.shoulderH - rB * 1.1;
+  const S = d.sleeve;
+  const hipHalf = Math.max(axesForGirth(Math.max(m.hip, seatG), shape.hip.aspect).a, d.legSpacing + d.thighR) + 12;
+  const forearmR = rB * 0.78;
   const needAtHip   = Math.atan2(hipHalf + forearmR + 35 - sx, sy - d.hipH);
-  const needAtWrist = Math.atan2(hipHalf + d.wristR * 1.3 + 35 - sx, sy - d.wristH);
-  const armAngle = Math.max(9 * Math.PI / 180, needAtHip, needAtWrist);
-  const armAt = (y) => sx + (sy - y) * Math.tan(armAngle);
+  const needAtWrist = Math.asin(Math.min(0.9, Math.max(0, (hipHalf + d.wristR * 1.3 + 35 - sx) / (S - rB))));
+  // …and the upper arm clears the ribcage just below the armpit, so the
+  // armpit is a fold, not a web of skin joining arm and chest
+  const chestHalf = axesForGirth(m.chest, shape.chest.aspect).a;
+  const needAtChest = Math.atan2(chestHalf + rB + 25 - sx, sy - (d.chestH - 60));
+  const armAngle = Math.max(9 * Math.PI / 180, needAtHip, needAtWrist, needAtChest);
+  const dir = [Math.sin(armAngle), -Math.cos(armAngle)];
+  const along = (t, z) => ({ x: sx + dir[0] * t, y: sy + dir[1] * t, z });
+  // the tape starts at the shoulder point, which sits above/outside the joint:
+  // measure the sleeve from where the shoulder point falls on the arm's axis
+  const t0 = (shoulderHalf - sx) * dir[0] + (d.shoulderH - sy) * dir[1];
+  const upper = S * UPPER_ARM_FRACTION;
   const arm = [
-    { x: sx,              y: sy,          z: 0,  r: d.upperArmR * 1.05 },
-    { x: armAt(d.elbowH), y: d.elbowH,    z: -8, r: d.upperArmR * 0.76 },
-    { x: armAt(d.wristH), y: d.wristH,    z: 6,  r: d.wristR * 1.0 },
+    { ...along(0, 0),                                   r: rB * 1.02 },   // shoulder joint
+    { ...along(t0 + upper * 0.5, -2),                   r: rB },          // bicep (the girth measured)
+    { ...along(t0 + upper, -8),                         r: rB * 0.74 },   // elbow
+    { ...along(t0 + upper + (S - upper) * 0.3, -2),     r: forearmR },    // forearm muscle
+    { ...along(t0 + S, 6),                              r: d.wristR },    // wrist
   ];
+  // deltoid: the rounded cap over the shoulder joint, slightly outside the
+  // shoulder point — gives the shoulder its slope into the arm
+  const deltoid = { x: shoulderHalf - rB * 0.75, y: d.shoulderH - rB * 1.15, z: -4, rx: rB * 1.05, ry: rB * 1.2, rz: rB * 1.15 };
   // hand: a mitten (tapered segment wrist → fingertips) — exact distance, no thin plate
   const handLen = Math.max(140, d.H * 0.1);
   const hand = {
-    x: armAt(d.wristH - handLen), y: d.wristH - handLen, z: 14,
-    r0: d.wristR * 1.05, r1: d.wristR * 0.8, ry: 20,
+    ...along(t0 + S + handLen, 14),
+    r0: d.wristR * 1.05, r1: d.wristR * 0.95, ry: 20,
   };
+  // the armpit: where the inside of the upper arm leaves the chest wall
+  const axillaY = Math.min(underArmY, sy - Math.max(0, chestHalf + rB - sx) / Math.tan(armAngle));
 
-  return { m, d, female, levels, leg, arm, hand, crotchShift: 0 };
+  return { m, d, female, levels, leg, arm, hand, deltoid, axillaY, crotchShift: 0, neckScale: 1, shoulderPoint: [shoulderHalf, d.shoulderH, 0] };
 }
 
 /** Compile a rig into fast evaluation closures. */
 function compile(rig) {
-  const { d, levels, leg, arm, hand } = rig;
+  const { d, levels, leg, arm, hand, deltoid, axillaY } = rig;
   // cap keys move with the crotch calibration but never pass the seat key
   // The torso bottom is a rounded (quarter-ellipse) fall-off from the seat
   // section to the crotch: the cap sections are fractions of the calibrated
@@ -157,13 +240,13 @@ function compile(rig) {
     const span = Math.max(20, seatY - d.crotchH);
     const room = { cap0: span * 0.75, cap1: span * 0.5, cap2: span * 0.18 }[l.key];
     const f = CAP_FRACTION[l.key];
-    const sb = seat.b * seat.scale;
     return {
       ...l, y: Math.min(l.y + rig.crotchShift, seatY - room), scale: 1,
       a: Math.max(l.a, seat.a * seat.scale * f.a),
-      bf: Math.max(l.b, sb * f.f), bb: Math.max(l.b, sb * f.b),
+      bf: Math.max(l.b, seat.bf * seat.scale * f.f), bb: Math.max(l.b, seat.bb * seat.scale * f.b),
     };
-  }).sort((p, q) => p.y - q.y);
+  }).map(l => (l.key === 'necktop' || l.key === 'neckbase' ? { ...l, a: l.a * rig.neckScale, bf: l.bf * rig.neckScale, bb: l.bb * rig.neckScale } : l))
+    .sort((p, q) => p.y - q.y);
   const aCurve  = monotoneCurve(L.map(l => ({ y: l.y, v: l.a * l.scale })));
   // front and back half-depths (equal except at the torso bottom)
   const bfCurve = monotoneCurve(L.map(l => ({ y: l.y, v: (l.bf ?? l.b) * l.scale })));
@@ -179,11 +262,17 @@ function compile(rig) {
   // sole rests on the floor (y = 0)
   const footRy = Math.max(26, d.ankleH * 0.45);
   const foot = { x: ankle.x + 6, y: footRy, z: 48, rx: d.ankleR * 1.35, ry: footRy, rz: Math.max(90, d.H * 0.066) };
-  const neckA = { x: 0, y: d.shoulderH - 30, z: -12, r: d.neckR * 1.15 };
-  const neckB = { x: 0, y: d.neckTopH + 25, z: 0, r: d.neckR * 0.95 };
-  // head top lands exactly on the measured height
-  const headRy = d.headR * 1.04;
-  const head = { y: d.H - headRy, z: 10, rx: d.headR * 0.80, ry: headRy, rz: d.headR * 0.95 };
+  // neck: rises from inside the trapezius at the nape, leaning slightly
+  // forward (cervical curve) up under the head
+  const ns = rig.neckScale;
+  const neckA = { x: 0, y: d.napeH - 40, z: -14, r: d.neckR * 1.12 * ns };
+  const neckB = { x: 0, y: d.neckTopH + 25, z: 2, r: d.neckR * 0.95 * ns };
+  // head: the cranium (its top lands exactly on the measured height) and the
+  // face/jaw below it, forward — so the chin is in front and the back of the
+  // neck shows below the skull instead of the head sitting on the shoulders
+  const R = d.headR;
+  const head = { y: d.H - R * 0.9, z: -4, rx: R * 0.78, ry: R * 0.9, rz: R * 0.95 };
+  const jaw  = { y: d.H - R * 1.45, z: 24, rx: R * 0.6, ry: R * 0.62, rz: R * 0.62 };
 
   const legTop = legPts[0].y + legPts[0].r + 20;
   const armBottom = hand.y - hand.r1 - 30;
@@ -204,7 +293,7 @@ function compile(rig) {
     // (slope measured over ±12 mm so the correction varies slowly: a factor
     // that changes quickly with height would tilt the gradient — the surface
     // normals — wherever the torso field is far from zero, e.g. on the thighs)
-    const e = 12;
+    const e = 20;
     const sa = (aCurve(yc + e) - aCurve(yc - e)) / (2 * e);
     const sb = (bc(yc + e) - bc(yc - e)) / (2 * e);
     const slope = Math.max(Math.abs(sa), Math.abs(sb));
@@ -232,16 +321,33 @@ function compile(rig) {
 
   function armD(xa, y, z) {
     if (y < armBottom || xa < arm[0].x - arm[0].r - 60) return FAR;
-    let dist = sdRoundCone(xa, y, z, arm[0].x, arm[0].y, arm[0].z, arm[1].x, arm[1].y, arm[1].z, arm[0].r, arm[1].r);
-    dist = smin(dist, sdRoundCone(xa, y, z, arm[1].x, arm[1].y, arm[1].z, arm[2].x, arm[2].y, arm[2].z, arm[1].r, arm[2].r), 0);
-    const w = arm[2];
-    return smin(dist, sdRoundCone(xa, y, z, w.x, w.y, w.z, hand.x, hand.y, hand.z, hand.r0, hand.r1), 6);
+    // chain of round cones sharing end spheres: a plain union is already smooth
+    let dist = FAR;
+    for (let i = 0; i < arm.length - 1; i++) {
+      const p = arm[i], q = arm[i + 1];
+      const s = sdRoundCone(xa, y, z, p.x, p.y, p.z, q.x, q.y, q.z, p.r, q.r);
+      if (s < dist) dist = s;
+    }
+    const w = arm[arm.length - 1];
+    dist = smin(dist, sdRoundCone(xa, y, z, w.x, w.y, w.z, hand.x, hand.y, hand.z, hand.r0, hand.r1), 12);
+    if (y > deltoid.y - deltoid.ry - K_DELT) {
+      dist = smin(dist, sdEllipsoid(xa, y, z, deltoid.x, deltoid.y, deltoid.z, deltoid.rx, deltoid.ry, deltoid.rz), K_DELT);
+    }
+    return dist;
+  }
+
+  /** Arm ↔ torso blend: wide at the armpit (smooth axillary fold), tight below (the arm hangs free). */
+  function armBlend(y) {
+    const t = (y - (axillaY - 70)) / 80;
+    const s = t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+    return K_ARM + (K_AXILLA - K_ARM) * s;
   }
 
   function headD(x, y, z) {
     if (y < neckA.y - neckA.r - 40) return FAR;
     const n = sdRoundCone(x, y, z, neckA.x, neckA.y, neckA.z, neckB.x, neckB.y, neckB.z, neckA.r, neckB.r);
-    const h = sdEllipsoid(x, y, z, 0, head.y, head.z, head.rx, head.ry, head.rz);
+    const h = smin(sdEllipsoid(x, y, z, 0, head.y, head.z, head.rx, head.ry, head.rz),
+                   sdEllipsoid(x, y, z, 0, jaw.y, jaw.z, jaw.rx, jaw.ry, jaw.rz), 24);
     return { n, h };
   }
 
@@ -253,12 +359,13 @@ function compile(rig) {
     if (lg !== FAR) dist = dist === FAR ? lg : smin(dist, lg, K_CROTCH);
     if (!opts || opts.arms !== false) {
       const ar = armD(xa, y, z);
-      if (ar !== FAR) dist = smin(dist, ar, K_ARM);
+      if (ar !== FAR) dist = smin(dist, ar, armBlend(y));
     }
     const hd = headD(x, y, z);
     if (hd !== FAR) {
       dist = smin(dist, hd.n, K_NECK);
-      dist = smin(dist, hd.h, K_HEAD);
+      // (opts.head = false: the neck without the chin — for taping the neck)
+      if (!opts || opts.head !== false) dist = smin(dist, hd.h, K_HEAD);
     }
     return dist;
   }
@@ -268,7 +375,9 @@ function compile(rig) {
     const yc = y < y0 ? y0 : y > y1 ? y1 : y;
     // as one symmetric ellipse with the same front and back extents
     const bf = Math.max(bfCurve(yc), 1), bb = Math.max(bbCurve(yc), 1);
-    return { a: Math.max(aCurve(yc), 1), b: (bf + bb) / 2, cz: czCurve(yc) + (bf - bb) / 2 };
+    // spineZ: where the section is widest (the spine's forward offset);
+    // front = spineZ + bf, back = spineZ − bb
+    return { a: Math.max(aCurve(yc), 1), b: (bf + bb) / 2, cz: czCurve(yc) + (bf - bb) / 2, spineZ: czCurve(yc), bf, bb };
   }
 
   /** Leg (one side, x > 0) cross-section at height y: centre x, z and radius. */
@@ -284,7 +393,7 @@ function compile(rig) {
     return { ...legPts[legPts.length - 1] };
   }
 
-  return { sdf, legPts, arm, hand, foot, head, torsoRange: [y0, y1], torsoSection, legSection };
+  return { sdf, legPts, arm, hand, foot, head, neckA, neckB, torsoRange: [y0, y1], torsoSection, legSection };
 }
 
 // ─── Tape measuring ──────────────────────────────────────────────────────────
@@ -354,9 +463,12 @@ export function createBodyModel(measurements, bodyType = 'male_adult', { calibra
   const d = rig.d;
   let c = compile(rig);
   const noArms = (x, y, z) => c.sdf(x, y, z, { arms: false });
+  const noHead = (x, y, z) => c.sdf(x, y, z, { arms: false, head: false });
 
   const seatTarget = m.seat ?? m.hip + 20;
   const thighY = d.crotchH - 30;
+  // neck girth: taped halfway between the nape and the top of the neck
+  const neckY = d.napeH + 25;
   const measureAll = () => {
     const lvl = Object.fromEntries(rig.levels.filter(l => !l.fixed).map(l => [l.key, l]));
     return {
@@ -365,18 +477,20 @@ export function createBodyModel(measurements, bodyType = 'male_adult', { calibra
       hip:   tapeGirth(noArms, lvl.hip.y,   0, lvl.hip.cz),
       seat:  tapeGirth(noArms, lvl.seat.y,  0, lvl.seat.cz),
       upperThigh: tapeGirth(noArms, thighY, legCenterX(d, thighY), -4, { minX: 0 }),
+      neck: tapeGirth(noHead, neckY, 0, -6),
     };
   };
 
   let girths = measureAll();
   let crotchY = findCrotchY(noArms, d.crotchH + 60, -8);
   if (calibrate) {
-    const targets = { chest: m.chest, waist: m.waist, hip: m.hip, seat: seatTarget, upperThigh: m.upperThighGirth };
-    for (let iter = 0; iter < 10; iter++) {
+    const targets = { chest: m.chest, waist: m.waist, hip: m.hip, seat: seatTarget, upperThigh: m.upperThighGirth, neck: m.neckGirth };
+    for (let iter = 0; iter < 14; iter++) {
       // crotch height: move the rounded torso bottom so waist→crotch = body rise
       rig.crotchShift += d.crotchH - crotchY;
       for (const l of rig.levels) if (!l.fixed) l.scale *= targets[l.key] / girths[l.key];
       rig.leg.thighScale *= targets.upperThigh / girths.upperThigh;
+      rig.neckScale *= targets.neck / girths.neck;
       c = compile(rig);
       girths = measureAll();
       crotchY = findCrotchY(noArms, d.crotchH + 60, -8);
@@ -385,7 +499,8 @@ export function createBodyModel(measurements, bodyType = 'male_adult', { calibra
     }
   }
 
-  const sdf = (x, y, z) => c.sdf(x, y, z);
+  // opts.arms = false: the body without arms (what a tape measure goes round)
+  const sdf = (x, y, z, opts) => c.sdf(x, y, z, opts);
   // outward unit normal = normalised SDF gradient (tetrahedral differences:
   // 4 evaluations instead of 6, same accuracy)
   const normal = (x, y, z) => {
@@ -407,6 +522,13 @@ export function createBodyModel(measurements, bodyType = 'male_adult', { calibra
     sdf, normal, girths, bounds, dims: d,
     torsoSection: c.torsoSection, legSection: c.legSection,
     crotchPoint: [0, crotchY, -8],
+    // tailoring landmarks (mm): where the tape starts and ends on this body
+    landmarks: {
+      shoulderPoint: rig.shoulderPoint,
+      napeH: d.napeH, neckY,
+      arm: rig.arm.map(p => ({ ...p })),        // shoulder joint, bicep, elbow, forearm, wrist
+      armDir: [rig.arm[4].x - rig.arm[0].x, rig.arm[4].y - rig.arm[0].y],
+    },
     measurements: m, bodyType,
     lengths: legLengths(m),
   };

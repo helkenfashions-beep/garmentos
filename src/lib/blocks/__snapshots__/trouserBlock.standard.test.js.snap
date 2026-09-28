@@ -1,0 +1,1117 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`classic standard — large 44 waist, jeans > geometry is pinned (approved shape) 1`] = `
+{
+  "back.crotchSide": [
+    1155,
+    370,
+  ],
+  "back.flip": [
+    1126.8,
+    462.7,
+  ],
+  "back.fork": [
+    685,
+    380,
+  ],
+  "back.hemInner": [
+    765,
+    1092.2,
+  ],
+  "back.hemOuter": [
+    1075,
+    1092.2,
+  ],
+  "back.hipCentre": [
+    805,
+    260,
+  ],
+  "back.hipSide": [
+    1155,
+    260,
+  ],
+  "back.kneeInner": [
+    775,
+    665.4,
+  ],
+  "back.kneeOuter": [
+    1065,
+    665.4,
+  ],
+  "back.waistCentre": [
+    840,
+    35,
+  ],
+  "back.waistSide": [
+    1170,
+    60,
+  ],
+  "crotchSide": [
+    80,
+    370,
+  ],
+  "flip": [
+    100.4,
+    462.7,
+  ],
+  "fork": [
+    460,
+    370,
+  ],
+  "hemInner": [
+    405,
+    1092.2,
+  ],
+  "hemOuter": [
+    135,
+    1092.2,
+  ],
+  "hipCentre": [
+    385,
+    260,
+  ],
+  "hipSide": [
+    80,
+    260,
+  ],
+  "kneeInner": [
+    395,
+    665.4,
+  ],
+  "kneeOuter": [
+    145,
+    665.4,
+  ],
+  "waistCentre": [
+    375,
+    60,
+  ],
+  "waistSide": [
+    75,
+    60,
+  ],
+}
+`;
+
+exports[`classic standard — large 44 waist, slack > geometry is pinned (approved shape) 1`] = `
+{
+  "back.crotchSide": [
+    1160,
+    370,
+  ],
+  "back.flip": [
+    1131.8,
+    462.7,
+  ],
+  "back.fork": [
+    690,
+    380,
+  ],
+  "back.hemInner": [
+    770,
+    1092.2,
+  ],
+  "back.hemOuter": [
+    1080,
+    1092.2,
+  ],
+  "back.hipCentre": [
+    810,
+    260,
+  ],
+  "back.hipSide": [
+    1160,
+    260,
+  ],
+  "back.kneeInner": [
+    780,
+    665.4,
+  ],
+  "back.kneeOuter": [
+    1070,
+    665.4,
+  ],
+  "back.waistCentre": [
+    845,
+    35,
+  ],
+  "back.waistSide": [
+    1175,
+    60,
+  ],
+  "crotchSide": [
+    80,
+    370,
+  ],
+  "flip": [
+    101.2,
+    462.7,
+  ],
+  "fork": [
+    465,
+    370,
+  ],
+  "hemInner": [
+    407.5,
+    1092.2,
+  ],
+  "hemOuter": [
+    137.5,
+    1092.2,
+  ],
+  "hipCentre": [
+    390,
+    260,
+  ],
+  "hipSide": [
+    80,
+    260,
+  ],
+  "kneeInner": [
+    397.5,
+    665.4,
+  ],
+  "kneeOuter": [
+    147.5,
+    665.4,
+  ],
+  "waistCentre": [
+    380,
+    60,
+  ],
+  "waistSide": [
+    80,
+    60,
+  ],
+}
+`;
+
+exports[`classic standard — large 44 waist, trouser > geometry is pinned (approved shape) 1`] = `
+{
+  "back.crotchSide": [
+    1165,
+    370,
+  ],
+  "back.flip": [
+    1136.8,
+    462.7,
+  ],
+  "back.fork": [
+    695,
+    380,
+  ],
+  "back.hemInner": [
+    775,
+    1092.2,
+  ],
+  "back.hemOuter": [
+    1085,
+    1092.2,
+  ],
+  "back.hipCentre": [
+    815,
+    260,
+  ],
+  "back.hipSide": [
+    1165,
+    260,
+  ],
+  "back.kneeInner": [
+    785,
+    665.4,
+  ],
+  "back.kneeOuter": [
+    1075,
+    665.4,
+  ],
+  "back.waistCentre": [
+    850,
+    35,
+  ],
+  "back.waistSide": [
+    1180,
+    60,
+  ],
+  "crotchSide": [
+    80,
+    370,
+  ],
+  "flip": [
+    102,
+    462.7,
+  ],
+  "fork": [
+    470,
+    370,
+  ],
+  "hemInner": [
+    410,
+    1092.2,
+  ],
+  "hemOuter": [
+    140,
+    1092.2,
+  ],
+  "hipCentre": [
+    395,
+    260,
+  ],
+  "hipSide": [
+    80,
+    260,
+  ],
+  "kneeInner": [
+    400,
+    665.4,
+  ],
+  "kneeOuter": [
+    150,
+    665.4,
+  ],
+  "waistCentre": [
+    385,
+    60,
+  ],
+  "waistSide": [
+    85,
+    60,
+  ],
+}
+`;
+
+exports[`classic standard — size 40 default, jeans > geometry is pinned (approved shape) 1`] = `
+{
+  "back.crotchSide": [
+    1018.3,
+    350,
+  ],
+  "back.flip": [
+    994.4,
+    452.8,
+  ],
+  "back.fork": [
+    611.3,
+    360,
+  ],
+  "back.hemInner": [
+    677.3,
+    1058.6,
+  ],
+  "back.hemOuter": [
+    952.3,
+    1058.6,
+  ],
+  "back.hipCentre": [
+    713.3,
+    260,
+  ],
+  "back.hipSide": [
+    1018.3,
+    260,
+  ],
+  "back.kneeInner": [
+    679.8,
+    645.6,
+  ],
+  "back.kneeOuter": [
+    949.8,
+    645.6,
+  ],
+  "back.waistCentre": [
+    748.3,
+    35,
+  ],
+  "back.waistSide": [
+    1008.3,
+    60,
+  ],
+  "crotchSide": [
+    80,
+    350,
+  ],
+  "flip": [
+    96.3,
+    452.8,
+  ],
+  "fork": [
+    403.8,
+    350,
+  ],
+  "hemInner": [
+    359.4,
+    1058.6,
+  ],
+  "hemOuter": [
+    124.4,
+    1058.6,
+  ],
+  "hipCentre": [
+    340,
+    260,
+  ],
+  "hipSide": [
+    80,
+    260,
+  ],
+  "kneeInner": [
+    356.9,
+    645.6,
+  ],
+  "kneeOuter": [
+    126.9,
+    645.6,
+  ],
+  "waistCentre": [
+    330,
+    60,
+  ],
+  "waistSide": [
+    100,
+    60,
+  ],
+}
+`;
+
+exports[`classic standard — size 40 default, slack > geometry is pinned (approved shape) 1`] = `
+{
+  "back.crotchSide": [
+    1023.3,
+    350,
+  ],
+  "back.flip": [
+    999.4,
+    452.8,
+  ],
+  "back.fork": [
+    616.3,
+    360,
+  ],
+  "back.hemInner": [
+    682.3,
+    1058.6,
+  ],
+  "back.hemOuter": [
+    957.3,
+    1058.6,
+  ],
+  "back.hipCentre": [
+    718.3,
+    260,
+  ],
+  "back.hipSide": [
+    1023.3,
+    260,
+  ],
+  "back.kneeInner": [
+    684.8,
+    645.6,
+  ],
+  "back.kneeOuter": [
+    954.8,
+    645.6,
+  ],
+  "back.waistCentre": [
+    753.3,
+    35,
+  ],
+  "back.waistSide": [
+    1013.3,
+    60,
+  ],
+  "crotchSide": [
+    80,
+    350,
+  ],
+  "flip": [
+    97.2,
+    452.8,
+  ],
+  "fork": [
+    408.8,
+    350,
+  ],
+  "hemInner": [
+    361.9,
+    1058.6,
+  ],
+  "hemOuter": [
+    126.9,
+    1058.6,
+  ],
+  "hipCentre": [
+    345,
+    260,
+  ],
+  "hipSide": [
+    80,
+    260,
+  ],
+  "kneeInner": [
+    359.4,
+    645.6,
+  ],
+  "kneeOuter": [
+    129.4,
+    645.6,
+  ],
+  "waistCentre": [
+    335,
+    60,
+  ],
+  "waistSide": [
+    105,
+    60,
+  ],
+}
+`;
+
+exports[`classic standard — size 40 default, trouser > geometry is pinned (approved shape) 1`] = `
+{
+  "back.crotchSide": [
+    1028.3,
+    350,
+  ],
+  "back.flip": [
+    1004.4,
+    452.8,
+  ],
+  "back.fork": [
+    621.3,
+    360,
+  ],
+  "back.hemInner": [
+    687.3,
+    1058.6,
+  ],
+  "back.hemOuter": [
+    962.3,
+    1058.6,
+  ],
+  "back.hipCentre": [
+    723.3,
+    260,
+  ],
+  "back.hipSide": [
+    1028.3,
+    260,
+  ],
+  "back.kneeInner": [
+    689.8,
+    645.6,
+  ],
+  "back.kneeOuter": [
+    959.8,
+    645.6,
+  ],
+  "back.waistCentre": [
+    758.3,
+    35,
+  ],
+  "back.waistSide": [
+    1018.3,
+    60,
+  ],
+  "crotchSide": [
+    80,
+    350,
+  ],
+  "flip": [
+    98,
+    452.8,
+  ],
+  "fork": [
+    413.8,
+    350,
+  ],
+  "hemInner": [
+    364.4,
+    1058.6,
+  ],
+  "hemOuter": [
+    129.4,
+    1058.6,
+  ],
+  "hipCentre": [
+    350,
+    260,
+  ],
+  "hipSide": [
+    80,
+    260,
+  ],
+  "kneeInner": [
+    361.9,
+    645.6,
+  ],
+  "kneeOuter": [
+    131.9,
+    645.6,
+  ],
+  "waistCentre": [
+    340,
+    60,
+  ],
+  "waistSide": [
+    110,
+    60,
+  ],
+}
+`;
+
+exports[`classic standard — slim 32 waist, jeans > geometry is pinned (approved shape) 1`] = `
+{
+  "back.crotchSide": [
+    960.3,
+    350,
+  ],
+  "back.flip": [
+    940.2,
+    442.9,
+  ],
+  "back.fork": [
+    581.3,
+    360,
+  ],
+  "back.hemInner": [
+    638.3,
+    1024.9,
+  ],
+  "back.hemOuter": [
+    903.3,
+    1024.9,
+  ],
+  "back.hipCentre": [
+    675.3,
+    260,
+  ],
+  "back.hipSide": [
+    960.3,
+    260,
+  ],
+  "back.kneeInner": [
+    640.8,
+    625.9,
+  ],
+  "back.kneeOuter": [
+    900.8,
+    625.9,
+  ],
+  "back.waistCentre": [
+    710.3,
+    35,
+  ],
+  "back.waistSide": [
+    950.3,
+    60,
+  ],
+  "crotchSide": [
+    80,
+    350,
+  ],
+  "flip": [
+    93.3,
+    442.9,
+  ],
+  "fork": [
+    378.8,
+    350,
+  ],
+  "hemInner": [
+    341.9,
+    1024.9,
+  ],
+  "hemOuter": [
+    116.9,
+    1024.9,
+  ],
+  "hipCentre": [
+    320,
+    260,
+  ],
+  "hipSide": [
+    80,
+    260,
+  ],
+  "kneeInner": [
+    339.4,
+    625.9,
+  ],
+  "kneeOuter": [
+    119.4,
+    625.9,
+  ],
+  "waistCentre": [
+    310,
+    60,
+  ],
+  "waistSide": [
+    100,
+    60,
+  ],
+}
+`;
+
+exports[`classic standard — slim 32 waist, slack > geometry is pinned (approved shape) 1`] = `
+{
+  "back.crotchSide": [
+    965.3,
+    350,
+  ],
+  "back.flip": [
+    945.2,
+    442.9,
+  ],
+  "back.fork": [
+    586.3,
+    360,
+  ],
+  "back.hemInner": [
+    643.3,
+    1024.9,
+  ],
+  "back.hemOuter": [
+    908.3,
+    1024.9,
+  ],
+  "back.hipCentre": [
+    680.3,
+    260,
+  ],
+  "back.hipSide": [
+    965.3,
+    260,
+  ],
+  "back.kneeInner": [
+    645.8,
+    625.9,
+  ],
+  "back.kneeOuter": [
+    905.8,
+    625.9,
+  ],
+  "back.waistCentre": [
+    715.3,
+    35,
+  ],
+  "back.waistSide": [
+    955.3,
+    60,
+  ],
+  "crotchSide": [
+    80,
+    350,
+  ],
+  "flip": [
+    94.1,
+    442.9,
+  ],
+  "fork": [
+    383.8,
+    350,
+  ],
+  "hemInner": [
+    344.4,
+    1024.9,
+  ],
+  "hemOuter": [
+    119.4,
+    1024.9,
+  ],
+  "hipCentre": [
+    325,
+    260,
+  ],
+  "hipSide": [
+    80,
+    260,
+  ],
+  "kneeInner": [
+    341.9,
+    625.9,
+  ],
+  "kneeOuter": [
+    121.9,
+    625.9,
+  ],
+  "waistCentre": [
+    315,
+    60,
+  ],
+  "waistSide": [
+    105,
+    60,
+  ],
+}
+`;
+
+exports[`classic standard — slim 32 waist, trouser > geometry is pinned (approved shape) 1`] = `
+{
+  "back.crotchSide": [
+    970.3,
+    350,
+  ],
+  "back.flip": [
+    950.2,
+    442.9,
+  ],
+  "back.fork": [
+    591.3,
+    360,
+  ],
+  "back.hemInner": [
+    648.3,
+    1024.9,
+  ],
+  "back.hemOuter": [
+    913.3,
+    1024.9,
+  ],
+  "back.hipCentre": [
+    685.3,
+    260,
+  ],
+  "back.hipSide": [
+    970.3,
+    260,
+  ],
+  "back.kneeInner": [
+    650.8,
+    625.9,
+  ],
+  "back.kneeOuter": [
+    910.8,
+    625.9,
+  ],
+  "back.waistCentre": [
+    720.3,
+    35,
+  ],
+  "back.waistSide": [
+    960.3,
+    60,
+  ],
+  "crotchSide": [
+    80,
+    350,
+  ],
+  "flip": [
+    94.9,
+    442.9,
+  ],
+  "fork": [
+    388.8,
+    350,
+  ],
+  "hemInner": [
+    346.9,
+    1024.9,
+  ],
+  "hemOuter": [
+    121.9,
+    1024.9,
+  ],
+  "hipCentre": [
+    330,
+    260,
+  ],
+  "hipSide": [
+    80,
+    260,
+  ],
+  "kneeInner": [
+    344.4,
+    625.9,
+  ],
+  "kneeOuter": [
+    124.4,
+    625.9,
+  ],
+  "waistCentre": [
+    320,
+    60,
+  ],
+  "waistSide": [
+    110,
+    60,
+  ],
+}
+`;
+
+exports[`classic standard — tall, measured lengths, jeans > geometry is pinned (approved shape) 1`] = `
+{
+  "back.crotchSide": [
+    1018.3,
+    350,
+  ],
+  "back.flip": [
+    992.3,
+    475,
+  ],
+  "back.fork": [
+    611.3,
+    360,
+  ],
+  "back.hemInner": [
+    677.3,
+    1140,
+  ],
+  "back.hemOuter": [
+    952.3,
+    1140,
+  ],
+  "back.hipCentre": [
+    713.3,
+    270,
+  ],
+  "back.hipSide": [
+    1018.3,
+    270,
+  ],
+  "back.kneeInner": [
+    679.8,
+    680,
+  ],
+  "back.kneeOuter": [
+    949.8,
+    680,
+  ],
+  "back.waistCentre": [
+    748.3,
+    35,
+  ],
+  "back.waistSide": [
+    1008.3,
+    60,
+  ],
+  "crotchSide": [
+    80,
+    350,
+  ],
+  "flip": [
+    97.8,
+    475,
+  ],
+  "fork": [
+    403.8,
+    350,
+  ],
+  "hemInner": [
+    359.4,
+    1140,
+  ],
+  "hemOuter": [
+    124.4,
+    1140,
+  ],
+  "hipCentre": [
+    340,
+    270,
+  ],
+  "hipSide": [
+    80,
+    270,
+  ],
+  "kneeInner": [
+    356.9,
+    680,
+  ],
+  "kneeOuter": [
+    126.9,
+    680,
+  ],
+  "waistCentre": [
+    330,
+    60,
+  ],
+  "waistSide": [
+    100,
+    60,
+  ],
+}
+`;
+
+exports[`classic standard — tall, measured lengths, slack > geometry is pinned (approved shape) 1`] = `
+{
+  "back.crotchSide": [
+    1023.3,
+    350,
+  ],
+  "back.flip": [
+    997.3,
+    475,
+  ],
+  "back.fork": [
+    616.3,
+    360,
+  ],
+  "back.hemInner": [
+    682.3,
+    1140,
+  ],
+  "back.hemOuter": [
+    957.3,
+    1140,
+  ],
+  "back.hipCentre": [
+    718.3,
+    270,
+  ],
+  "back.hipSide": [
+    1023.3,
+    270,
+  ],
+  "back.kneeInner": [
+    684.8,
+    680,
+  ],
+  "back.kneeOuter": [
+    954.8,
+    680,
+  ],
+  "back.waistCentre": [
+    753.3,
+    35,
+  ],
+  "back.waistSide": [
+    1013.3,
+    60,
+  ],
+  "crotchSide": [
+    80,
+    350,
+  ],
+  "flip": [
+    98.7,
+    475,
+  ],
+  "fork": [
+    408.8,
+    350,
+  ],
+  "hemInner": [
+    361.9,
+    1140,
+  ],
+  "hemOuter": [
+    126.9,
+    1140,
+  ],
+  "hipCentre": [
+    345,
+    270,
+  ],
+  "hipSide": [
+    80,
+    270,
+  ],
+  "kneeInner": [
+    359.4,
+    680,
+  ],
+  "kneeOuter": [
+    129.4,
+    680,
+  ],
+  "waistCentre": [
+    335,
+    60,
+  ],
+  "waistSide": [
+    105,
+    60,
+  ],
+}
+`;
+
+exports[`classic standard — tall, measured lengths, trouser > geometry is pinned (approved shape) 1`] = `
+{
+  "back.crotchSide": [
+    1028.3,
+    350,
+  ],
+  "back.flip": [
+    1002.3,
+    475,
+  ],
+  "back.fork": [
+    621.3,
+    360,
+  ],
+  "back.hemInner": [
+    687.3,
+    1140,
+  ],
+  "back.hemOuter": [
+    962.3,
+    1140,
+  ],
+  "back.hipCentre": [
+    723.3,
+    270,
+  ],
+  "back.hipSide": [
+    1028.3,
+    270,
+  ],
+  "back.kneeInner": [
+    689.8,
+    680,
+  ],
+  "back.kneeOuter": [
+    959.8,
+    680,
+  ],
+  "back.waistCentre": [
+    758.3,
+    35,
+  ],
+  "back.waistSide": [
+    1018.3,
+    60,
+  ],
+  "crotchSide": [
+    80,
+    350,
+  ],
+  "flip": [
+    99.6,
+    475,
+  ],
+  "fork": [
+    413.8,
+    350,
+  ],
+  "hemInner": [
+    364.4,
+    1140,
+  ],
+  "hemOuter": [
+    129.4,
+    1140,
+  ],
+  "hipCentre": [
+    350,
+    270,
+  ],
+  "hipSide": [
+    80,
+    270,
+  ],
+  "kneeInner": [
+    361.9,
+    680,
+  ],
+  "kneeOuter": [
+    131.9,
+    680,
+  ],
+  "waistCentre": [
+    340,
+    60,
+  ],
+  "waistSide": [
+    110,
+    60,
+  ],
+}
+`;

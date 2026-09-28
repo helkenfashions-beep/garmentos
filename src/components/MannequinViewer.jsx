@@ -1,269 +1,207 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createAvatarModel, bodyForDrape } from '../lib/avatar/avatar';
+import { requestAvatarMesh } from '../lib/avatar/meshClient';
+import { drapePattern, solvePatternPoint } from '../lib/drape/drape';
+import { simulateCloth } from '../lib/cloth/clothClient';
+import { CLOTH_MESH } from '../lib/cloth/pbd';
 
 // ─── Body geometry ────────────────────────────────────────────────────────────
 //
-// All dimensions in mm.  Every body section uses LatheGeometry (surface of
-// revolution) — no cylinders, no flat caps, no ball joints.
-// Limb pieces are offset to x = ±spacing so they blend into the torso at
-// junction points (matching radii create seamless visual transitions).
+// The mannequin is the parametric avatar (lib/avatar): one signed-distance
+// body, calibrated to the measurements, meshed off the main thread. The drape
+// collides with the same field, so what you see is what the fabric touches.
 
-const TAU = 2 * Math.PI;
+const BODY_SPACING = 12;      // mm between mesh samples
+const BODY_DEBOUNCE = 90;     // ms — coalesce fast measurement edits
 
-function V(r, y) { return new THREE.Vector2(r, y); }
-
-function deriveBodyDims(m) {
-  const H = m.height;
-
-  // Radii from girth measurements (girth = 2πr)
-  const neckR     = m.neckGirth      / TAU;
-  const chestR    = m.chest          / TAU;
-  const waistR    = m.waist          / TAU;
-  const hipR      = m.hip            / TAU;
-  const seatR     = m.seat           / TAU;
-  const thighR    = m.upperThighGirth / TAU;
-  const kneeR     = m.kneeGirth      / TAU;
-  const calfR     = m.calfGirth      / TAU;
-  const upperArmR = m.upperArmGirth  / TAU;
-  const wristR    = m.wristGirth     / TAU;
-  const ankleR    = calfR * 0.66;
-
-  // Heights from floor — tuned for a clean dress-form silhouette
-  const headR     = H * 0.065;
-  const headCtrH  = H - headR;                   // head sphere centre
-  const neckTopH  = H - headR * 1.85;            // top of neck / bottom of head
-  const shoulderH = H * 0.844;                   // arm attachment height
-  const chestH    = H * 0.756;
-  const waistH    = H * 0.615;
-  const hipH      = waistH - 190;
-  const seatH     = hipH  - 50;
-  const crotchH   = waistH - m.bodyRise;
-  const kneeH     = H * 0.286;
-  const calfH     = H * 0.18;
-  const ankleH    = H * 0.054;
-  const elbowH    = H * 0.630;
-  const wristH    = H * 0.420;
-
-  const legSpacing = hipR * 0.40;
-  const armSpacing = m.shoulderWidth / 2;
-
-  return {
-    H, headR, headCtrH, neckTopH, shoulderH, chestH,
-    waistH, hipH, seatH, crotchH, kneeH, calfH, ankleH, elbowH, wristH,
-    neckR, chestR, waistR, hipR, seatR, thighR, kneeR, calfR, ankleR,
-    upperArmR, wristR, legSpacing, armSpacing,
-  };
-}
-
-function lerp(a, b, t) { return a + (b - a) * t; }
-
-function buildSmoothBody(measurements) {
-  const d   = deriveBodyDims(measurements);
+function buildBodyMesh({ positions, normals, indices }) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  geo.setIndex(new THREE.BufferAttribute(indices, 1));
+  geo.computeBoundingSphere();
+  const mat = new THREE.MeshStandardMaterial({ color: 0xd0c4b8, roughness: 0.72, metalness: 0.0 });
+  const mesh = new THREE.Mesh(geo, mat);
+  // casts onto the floor; no self-shadowing (the shadow map is too coarse
+  // for the crotch and armpits and would draw ragged dark patches there)
+  mesh.castShadow = true;
+  mesh.receiveShadow = false;
   const grp = new THREE.Group();
-
-  const mat = new THREE.MeshStandardMaterial({
-    color:     0xd0c4b8,   // warm cream — tailor's dress form
-    roughness: 0.72,
-    metalness: 0.0,
-  });
-
-  function mesh(geo, x = 0, y = 0, z = 0) {
-    const m = new THREE.Mesh(geo, mat);
-    m.position.set(x, y, z);
-    m.castShadow = true;
-    m.receiveShadow = true;
-    grp.add(m);
-    return m;
-  }
-
-  function lathe(pts, segs = 40) {
-    return new THREE.LatheGeometry(pts, segs);
-  }
-
-  // ── TORSO (neck to crotch) ────────────────────────────────────────────────
-  // Profile: bottom → top (LatheGeometry needs monotonic-y for outward normals)
-  const torsoProfile = [
-    V(d.thighR * 0.70,           d.crotchH),
-    V(d.seatR,                   d.seatH),
-    V(d.hipR,                    d.hipH),
-    V(lerp(d.hipR, d.waistR, 0.35), lerp(d.hipH, d.waistH, 0.35)),
-    V(d.waistR,                  d.waistH),
-    V(lerp(d.waistR, d.chestR, 0.30), lerp(d.waistH, d.chestH, 0.30)),
-    V(lerp(d.waistR, d.chestR, 0.65), lerp(d.waistH, d.chestH, 0.65)),
-    V(d.chestR,                  d.chestH),
-    V(lerp(d.chestR, d.armSpacing * 0.82, 0.5), lerp(d.chestH, d.shoulderH, 0.5)),
-    V(d.armSpacing * 0.82,       d.shoulderH),
-    V(lerp(d.armSpacing * 0.82, d.neckR * 1.5, 0.5), lerp(d.shoulderH, d.neckTopH, 0.3)),
-    V(d.neckR * 1.5,             lerp(d.shoulderH, d.neckTopH, 0.55)),
-    V(d.neckR * 1.15,            lerp(d.shoulderH, d.neckTopH, 0.75)),
-    V(d.neckR,                   d.neckTopH),
-  ];
-  mesh(lathe(torsoProfile, 48));
-
-  // ── HEAD ─────────────────────────────────────────────────────────────────
-  const headMesh = mesh(
-    new THREE.SphereGeometry(d.headR, 36, 28),
-    0, d.headCtrH, 0
-  );
-  // Slightly flatten front-to-back for a more realistic head shape
-  headMesh.scale.set(1.0, 1.08, 0.88);
-
-  // ── LEGS ─────────────────────────────────────────────────────────────────
-  // Profile: bottom (ankle) → top (crotch), offset to ±legSpacing on x-axis
-  const legProfile = [
-    V(d.ankleR * 0.90,           d.ankleH),
-    V(d.ankleR * 1.18,           d.ankleH + 45),
-    V(d.calfR  * 0.82,           lerp(d.ankleH, d.kneeH, 0.35)),
-    V(d.calfR,                   d.calfH),
-    V(d.calfR  * 0.86,           lerp(d.calfH, d.kneeH, 0.55)),
-    V(d.kneeR  * 0.90,           d.kneeH - 35),
-    V(d.kneeR  * 1.06,           d.kneeH),
-    V(d.kneeR  * 0.94,           d.kneeH + 35),
-    V(lerp(d.kneeR, d.thighR, 0.35), lerp(d.kneeH, d.crotchH, 0.35)),
-    V(lerp(d.kneeR, d.thighR, 0.70), lerp(d.kneeH, d.crotchH, 0.70)),
-    V(d.thighR * 1.02,           lerp(d.kneeH, d.crotchH, 0.86)),
-    V(d.thighR,                  d.crotchH),
-  ];
-  mesh(lathe(legProfile, 36), -d.legSpacing);
-  mesh(lathe(legProfile, 36),  d.legSpacing);
-
-  // ── ARMS ─────────────────────────────────────────────────────────────────
-  // Profile: bottom (wrist) → top (shoulder)
-  const armProfile = [
-    V(d.wristR,                  d.wristH),
-    V(d.wristR * 1.18,           d.wristH + 35),
-    V(lerp(d.wristR, d.upperArmR, 0.30), lerp(d.wristH, d.elbowH, 0.30)),
-    V(lerp(d.wristR, d.upperArmR, 0.60), lerp(d.wristH, d.elbowH, 0.60)),
-    V(d.upperArmR * 0.82,        d.elbowH - 28),
-    V(d.upperArmR * 0.96,        d.elbowH),
-    V(d.upperArmR * 0.88,        d.elbowH + 28),
-    V(lerp(d.upperArmR, d.upperArmR * 1.18, 0.35), lerp(d.elbowH, d.shoulderH, 0.35)),
-    V(lerp(d.upperArmR, d.upperArmR * 1.18, 0.70), lerp(d.elbowH, d.shoulderH, 0.70)),
-    V(d.upperArmR * 1.18,        d.shoulderH),
-  ];
-  mesh(lathe(armProfile, 32), -d.armSpacing);
-  mesh(lathe(armProfile, 32),  d.armSpacing);
-
-  // ── FOOT STUBS ───────────────────────────────────────────────────────────
-  const footGeo = new THREE.SphereGeometry(d.ankleR * 1.5, 20, 14);
-  const fl = mesh(footGeo, -d.legSpacing, d.ankleH * 0.35, d.ankleR);
-  const fr = mesh(footGeo,  d.legSpacing, d.ankleH * 0.35, d.ankleR);
-  fl.scale.set(0.75, 0.42, 1.7);
-  fr.scale.set(0.75, 0.42, 1.7);
-
+  grp.name = 'body';
+  grp.add(mesh);
   return grp;
 }
 
-// ─── Pattern overlay ──────────────────────────────────────────────────────────
+// ─── Garment (draped pattern) ────────────────────────────────────────────────
 
-function buildPatternLines(patternState, waistY) {
-  const { points, segments } = patternState;
-  const ptArr = Object.values(points);
-  if (!ptArr.length) return null;
+const PANEL_COLORS = { front: 0x3e6a93, back: 0x355d82, free: 0x7a5a9a };
+const HANDLE_COLOR = 0xf0883e;
+const HANDLE_ACTIVE = 0xffd166;
 
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const p of ptArr) {
-    if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-    if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
-  }
-  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-  const S  = 1.0; // 1 mm = 1 Three.js unit (our scene is in mm)
+/**
+ * Meshes for draped instances. `geos[k]` is instance k's geometry (so the cloth
+ * solver can stream new positions into it). The solver's garment is built
+ * without seam lines or drag handles: both belong to the geometric drape.
+ */
+function buildGarment(instances, fabricColor, { seams = true, handles: withHandles = true } = {}) {
+  const grp = new THREE.Group();
+  grp.name = 'garment';
+  const handleGeo = new THREE.SphereGeometry(7, 12, 10);
+  const handles = [];
+  const geos = [];
 
-  function p3(px, py) {
-    return [(px - cx) * S, waistY + (cy - py) * S, 300]; // 300mm in front
-  }
-
-  const verts = [];
-  for (const seg of Object.values(segments)) {
-    const p1 = points[seg.p1], p2 = points[seg.p2];
-    if (!p1 || !p2) continue;
-    if (seg.type === 'line') {
-      verts.push(...p3(p1.x, p1.y), ...p3(p2.x, p2.y));
-    } else if (seg.type === 'bezier') {
-      const { c1, c2 } = seg;
-      let prev = p3(p1.x, p1.y);
-      for (let i = 1; i <= 20; i++) {
-        const t = i / 20, mt = 1 - t;
-        const bx = mt*mt*mt*p1.x + 3*mt*mt*t*c1.x + 3*mt*t*t*c2.x + t*t*t*p2.x;
-        const by = mt*mt*mt*p1.y + 3*mt*mt*t*c1.y + 3*mt*t*t*c2.y + t*t*t*p2.y;
-        const curr = p3(bx, by);
-        verts.push(...prev, ...curr);
-        prev = curr;
-      }
+  for (let idx = 0; idx < instances.length; idx++) {
+    const inst = instances[idx];
+    if (inst.indices.length) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(inst.positions, 3));
+      geo.setIndex(new THREE.BufferAttribute(inst.indices, 1));
+      geo.computeVertexNormals();
+      const base = new THREE.Color(fabricColor ?? PANEL_COLORS[inst.panel] ?? PANEL_COLORS.free);
+      if (fabricColor && inst.panel === 'back') base.multiplyScalar(0.88);
+      const mat = new THREE.MeshStandardMaterial({
+        color: base, roughness: 0.9, metalness: 0, side: THREE.DoubleSide,
+        // fabric sits millimetres off the skin: bias it toward the camera so the
+        // body can never z-fight through it at normal viewing distance
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -8,
+      });
+      const m = new THREE.Mesh(geo, mat);
+      m.castShadow = true;
+      m.userData.fabric = true;
+      grp.add(m);
+      geos[idx] = geo;
+    }
+    if (seams && inst.seams.length) {
+      const sg = new THREE.BufferGeometry();
+      sg.setAttribute('position', new THREE.BufferAttribute(inst.seams, 3));
+      grp.add(new THREE.LineSegments(sg, new THREE.LineBasicMaterial({ color: 0xe6edf3 })));
+    }
+    for (const h of withHandles ? inst.handles : []) {
+      const hm = new THREE.Mesh(handleGeo, new THREE.MeshBasicMaterial({ color: HANDLE_COLOR }));
+      hm.position.set(h.pos[0], h.pos[1], h.pos[2]);
+      hm.userData.handle = { pointId: h.pointId, x: h.x, y: h.y, instance: idx };
+      hm.renderOrder = 2;
+      grp.add(hm);
+      handles.push(hm);
     }
   }
-  if (!verts.length) return null;
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-  return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x58a6ff }));
+  return { group: grp, handles, geos };
 }
 
 // ─── Dispose helper ───────────────────────────────────────────────────────────
 
 function disposeObject(obj) {
   if (!obj) return;
+  const geos = new Set(), mats = new Set();
   obj.traverse(o => {
-    o.geometry?.dispose();
-    if (o.material && !Array.isArray(o.material)) o.material.dispose();
-    else if (Array.isArray(o.material)) o.material.forEach(m => m.dispose());
+    if (o.geometry) geos.add(o.geometry);
+    if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => mats.add(m));
   });
+  geos.forEach(g => g.dispose());
+  mats.forEach(m => m.dispose());
+}
+
+// ─── Camera framing ───────────────────────────────────────────────────────────
+
+/** Distance and target that fit the whole body in the panel, whatever its shape. */
+function frameBody(camera, model) {
+  const d = model.dims;
+  const halfFov = (camera.fov * Math.PI / 180) / 2;
+  const needH = d.H * 1.22;                 // full height + room for the camera buttons
+  const needW = model.bounds.max[0] * 2 + 120;   // hands (A-pose) + margin
+  const distH = (needH / 2) / Math.tan(halfFov);
+  const distW = (needW / 2) / (Math.tan(halfFov) * (camera.aspect || 1));
+  return { dist: Math.max(distH, distW), ty: d.H * 0.47 };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const PRESETS = ['front', 'back', 'left', 'right'];
 
-export default function MannequinViewer({ measurements, patternState, bodyType = 'male_adult' }) {
-  const mountRef   = useRef(null);
-  const threeRef   = useRef(null);
-  const bodyRef    = useRef(null);
-  const patternRef = useRef(null);
+export default function MannequinViewer({
+  measurements, patternState, bodyType = 'male_adult',
+  onHandleDrag, fabricColor = null, compact = false,
+}) {
+  const mountRef    = useRef(null);
+  const threeRef    = useRef(null);
+  const bodyRef     = useRef(null);
+  const garmentRef  = useRef(null);   // { group, handles }
+  const instancesRef = useRef([]);
+  const dragRef     = useRef(null);
+  const onHandleDragRef = useRef(onHandleDrag);
+  useEffect(() => { onHandleDragRef.current = onHandleDrag; }, [onHandleDrag]);
+
+  const [showHandles, setShowHandles] = useState(true);
+  const showHandlesRef = useRef(true);
+  useEffect(() => {
+    showHandlesRef.current = showHandles;
+    garmentRef.current?.handles.forEach(h => { h.visible = showHandles; });
+  }, [showHandles]);
+
+  const [stats, setStats] = useState({ ms: 0, pieces: 0 });
+  // Cloth simulation (on demand): idle → running → done. A new edit, a new
+  // body or "reset" goes back to the live geometric drape.
+  const [sim, setSim] = useState({ state: 'idle', frame: 0, ms: 0, reason: '' });
+  const [drapeVersion, setDrapeVersion] = useState(0);
+  const simRef = useRef(null);            // { run } of the running simulation
+  const simStatsRef = useRef(null);
+  const framedRef = useRef(false);      // true once the user has orbited/zoomed
+  const lastBodyTypeRef = useRef(null);
+  const bodyDimsRef = useRef(null);
+  const setPresetRef = useRef(null);
+
+  // calibrated body (fast, main thread) — shared by the drape and the framing
+  const model = useMemo(
+    () => (measurements ? createAvatarModel(measurements, bodyType) : null),
+    [measurements, bodyType],
+  );
+  const drapeBody = useMemo(() => (model ? bodyForDrape(model) : null), [model]);
+  const [bodyInfo, setBodyInfo] = useState({ ready: false, ms: 0 });
 
   // ── Scene setup (once) ──────────────────────────────────────────────────
   useEffect(() => {
     const mount = mountRef.current;
     const { width: W, height: H } = mount.getBoundingClientRect();
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(W || 400, H || 700);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x0d1117);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.domElement.style.touchAction = 'none';
+    renderer.domElement.style.display = 'block';
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-
-    // Lighting — three-point setup for clean dress-form rendering
-    scene.add(new THREE.AmbientLight(0xffffff, 0.50));
-
+    // sky/ground ambient: undersides (groin, under the arms) get a soft
+    // bounce instead of flat darkness
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x6e6660, 0.75));
+    const front = new THREE.DirectionalLight(0xffffff, 0.30);
+    front.position.set(0, 300, 2000);
+    scene.add(front);
     const key = new THREE.DirectionalLight(0xfff8f0, 1.20);
     key.position.set(600, 2000, 1200);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
     scene.add(key);
-
-    const fill = new THREE.DirectionalLight(0xd0e8ff, 0.35);
+    const fill = new THREE.DirectionalLight(0xd0e8ff, 0.40);
     fill.position.set(-800, 800, -600);
     scene.add(fill);
-
-    const rim = new THREE.DirectionalLight(0xffffff, 0.20);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.25);
     rim.position.set(0, -200, -1500);
     scene.add(rim);
 
-    // Ground shadow disc
-    const gGeo = new THREE.CircleGeometry(600, 48);
-    const gMat = new THREE.MeshLambertMaterial({ color: 0x0d1117 });
-    const ground = new THREE.Mesh(gGeo, gMat);
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(600, 48), new THREE.MeshLambertMaterial({ color: 0x0d1117 }));
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // Camera (mm-scale scene: body ~1780mm tall)
-    const camera = new THREE.PerspectiveCamera(28, (W || 400) / (H || 700), 1, 50000);
+    // near plane at 50 mm (not 1 mm) → ~50× better depth precision on the body
+    const camera = new THREE.PerspectiveCamera(28, (W || 400) / (H || 700), 50, 30000);
     const defH = 1780;
     camera.position.set(0, defH * 0.52, defH * 2.5);
     camera.lookAt(0, defH * 0.52, 0);
@@ -272,7 +210,7 @@ export default function MannequinViewer({ measurements, patternState, bodyType =
     controls.target.set(0, defH * 0.52, 0);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.minDistance = 100;
+    controls.minDistance = 250;
     controls.maxDistance = 12000;
     controls.update();
 
@@ -284,83 +222,338 @@ export default function MannequinViewer({ measurements, patternState, bodyType =
     };
     animate();
 
-    threeRef.current = { renderer, scene, camera, controls, animId };
+    threeRef.current = { renderer, scene, camera, controls };
+
+    // ── Seam-point dragging (3D → 2D) ─────────────────────────────────────
+    const raycaster = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+
+    function toNdc(e) {
+      const r = renderer.domElement.getBoundingClientRect();
+      ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+      return r;
+    }
+
+    /** Nearest visible handle within a finger/mouse radius, in screen space. */
+    function pickHandle(e) {
+      const g = garmentRef.current;
+      if (!g || !showHandlesRef.current) return null;
+      const r = toNdc(e);
+      const radius = e.pointerType === 'touch' ? 30 : 14;
+      let best = null, bestD = radius;
+      const v = new THREE.Vector3();
+      for (const h of g.handles) {
+        v.copy(h.position).project(camera);
+        if (v.z > 1) continue;
+        const sx = (v.x + 1) / 2 * r.width, sy = (1 - v.y) / 2 * r.height;
+        const d = Math.hypot(sx - (e.clientX - r.left), sy - (e.clientY - r.top));
+        if (d < bestD) {
+          // occlusion: is fabric/body in front of this handle?
+          raycaster.set(camera.position, h.position.clone().sub(camera.position).normalize());
+          const dist = camera.position.distanceTo(h.position);
+          const blockers = [bodyRef.current, g.group].filter(Boolean);
+          const hits = raycaster.intersectObjects(blockers, true)
+            .filter(i => !i.object.userData.handle && i.object.type === 'Mesh');
+          if (hits.length && hits[0].distance < dist - 12) continue;
+          best = h; bestD = d;
+        }
+      }
+      return best;
+    }
+
+    function onDown(e) {
+      const h = pickHandle(e);
+      if (!h) return;
+      e.stopPropagation();
+      e.preventDefault();
+      controls.enabled = false;
+      const inst = instancesRef.current[h.userData.handle.instance];
+      const normal = new THREE.Vector3();
+      camera.getWorldDirection(normal);
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, h.position);
+      toNdc(e);
+      raycaster.setFromCamera(ndc, camera);
+      const hit0 = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(plane, hit0)) { controls.enabled = true; return; }
+      h.material.color.setHex(HANDLE_ACTIVE);
+      dragRef.current = {
+        pointerId: e.pointerId, handle: h, plane, hit0, sx: inst.sx,
+        pos0: h.position.clone(), map: inst.map,
+        start: { x: h.userData.handle.x, y: h.userData.handle.y },
+        pointId: h.userData.handle.pointId, last: null,
+      };
+      renderer.domElement.setPointerCapture?.(e.pointerId);
+    }
+
+    function onMove(e) {
+      const ds = dragRef.current;
+      if (!ds || e.pointerId !== ds.pointerId) return;
+      e.stopPropagation();
+      toNdc(e);
+      raycaster.setFromCamera(ndc, camera);
+      const hit = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(ds.plane, hit)) return;
+      const target = ds.pos0.clone().add(hit.sub(ds.hit0));
+      const sol = solvePatternPoint(ds.map, ds.start, [target.x, target.y, target.z]);
+      ds.last = sol;
+      ds.handle.position.copy(target);
+      onHandleDragRef.current?.(ds.pointId, sol.x, sol.y, false);
+    }
+
+    function onUp(e) {
+      const ds = dragRef.current;
+      if (!ds || e.pointerId !== ds.pointerId) return;
+      dragRef.current = null;
+      controls.enabled = true;
+      renderer.domElement.releasePointerCapture?.(e.pointerId);
+      if (ds.last) onHandleDragRef.current?.(ds.pointId, ds.last.x, ds.last.y, true);
+      else ds.handle.material.color.setHex(HANDLE_COLOR);
+    }
+
+    // capture phase so we win against OrbitControls' own pointerdown
+    const el = renderer.domElement;
+    el.addEventListener('pointerdown', onDown, { capture: true });
+    el.addEventListener('pointermove', onMove, { capture: true });
+    el.addEventListener('pointerup', onUp, { capture: true });
+    el.addEventListener('pointercancel', onUp, { capture: true });
+
+    // Automation hook (used by the end-to-end tests): screen position of a handle
+    window.__garmentos3d = {
+      handleScreen(pointId, sx = 1) {
+        const g = garmentRef.current;
+        if (!g) return null;
+        const h = g.handles.find(q => q.userData.handle.pointId === pointId &&
+          instancesRef.current[q.userData.handle.instance]?.sx === sx);
+        if (!h) return null;
+        const r = renderer.domElement.getBoundingClientRect();
+        const v = h.position.clone().project(camera);
+        return { x: r.left + (v.x + 1) / 2 * r.width, y: r.top + (1 - v.y) / 2 * r.height };
+      },
+      handleIds() { return garmentRef.current?.handles.map(h => h.userData.handle.pointId) ?? []; },
+      instances() { return instancesRef.current.map(i => ({ key: i.key, sx: i.sx, tris: i.indices.length / 3 })); },
+      preset(p) { setPresetRef.current?.(p); },
+      look(pos, target) {
+        controls.target.set(...target);
+        camera.position.set(...pos);
+        camera.lookAt(...target);
+        controls.update();
+        framedRef.current = true;
+      },
+      setBodyVisible(v) { if (bodyRef.current) bodyRef.current.visible = v; },
+      cameraPos() { return camera.position.toArray(); },
+      // finish the orbit's momentum now (tests: software rendering is too slow to wait it out)
+      stopCameraMotion() { controls.enableDamping = false; controls.update(); controls.enableDamping = true; return camera.position.toArray(); },
+      bodyBox() {
+        if (!bodyRef.current) return null;
+        const b = new THREE.Box3().setFromObject(bodyRef.current);
+        return { min: b.min.toArray(), max: b.max.toArray() };
+      },
+      bodyReady() { return !!bodyRef.current; },
+      simStats() { return simStatsRef.current; },
+      /** Front-to-back depth of the body mesh at height y (arms don't affect it). */
+      bodyDepthAt(y) {
+        let lo = Infinity, hi = -Infinity;
+        bodyRef.current?.traverse(o => {
+          if (!o.isMesh) return;
+          const p = o.geometry.attributes.position.array;
+          for (let i = 0; i < p.length; i += 3) if (Math.abs(p[i + 1] - y) < 8) { lo = Math.min(lo, p[i + 2]); hi = Math.max(hi, p[i + 2]); }
+        });
+        return hi - lo;
+      },
+      waistHeight() { return bodyDimsRef.current?.dims.waistH ?? null; },
+      debugNormals(on) {
+        bodyRef.current?.traverse(o => {
+          if (!o.isMesh) return;
+          if (on) { o.userData.mat = o.material; o.material = new THREE.MeshNormalMaterial(); }
+          else if (o.userData.mat) o.material = o.userData.mat;
+        });
+      },
+      setGarmentVisible(v) { if (garmentRef.current) garmentRef.current.group.visible = v; },
+    };
 
     const ro = new ResizeObserver(() => {
-      const t = threeRef.current;
-      if (!t) return;
       const W2 = mount.clientWidth, H2 = mount.clientHeight;
       if (!W2 || !H2) return;
-      t.renderer.setSize(W2, H2);
-      t.camera.aspect = W2 / H2;
-      t.camera.updateProjectionMatrix();
+      renderer.setSize(W2, H2);
+      camera.aspect = W2 / H2;
+      camera.updateProjectionMatrix();
+      if (!framedRef.current && bodyDimsRef.current) {
+        // until the user moves the camera, keep the body framed as the panel resizes
+        const { dist, ty } = frameBody(camera, bodyDimsRef.current);
+        const dir = camera.position.clone().sub(controls.target).normalize();
+        controls.target.set(0, ty, 0);
+        camera.position.copy(controls.target).addScaledVector(dir, dist);
+        controls.update();
+      }
     });
+    controls.addEventListener('start', () => { framedRef.current = true; });
     ro.observe(mount);
 
     return () => {
       cancelAnimationFrame(animId);
       ro.disconnect();
+      el.removeEventListener('pointerdown', onDown, { capture: true });
+      el.removeEventListener('pointermove', onMove, { capture: true });
+      el.removeEventListener('pointerup', onUp, { capture: true });
+      el.removeEventListener('pointercancel', onUp, { capture: true });
       controls.dispose();
+      disposeObject(scene);
       renderer.dispose();
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
+      simRef.current?.run.cancel();
+      simRef.current = null;
       threeRef.current = null;
+      bodyRef.current = null;
+      garmentRef.current = null;
+      delete window.__garmentos3d;
     };
   }, []);
 
-  // ── Rebuild body when measurements / bodyType change ─────────────────────
+  // ── Frame the camera for a new body ─────────────────────────────────────
   useEffect(() => {
     const t = threeRef.current;
-    if (!t || !measurements) return;
-
-    if (bodyRef.current) {
-      disposeObject(bodyRef.current);
-      t.scene.remove(bodyRef.current);
+    if (!t || !model) return;
+    bodyDimsRef.current = model;
+    // Reframe on first build or a new body type. While measurements are being
+    // edited, keep the view the user turned the body to.
+    const newType = lastBodyTypeRef.current !== bodyType;
+    lastBodyTypeRef.current = bodyType;
+    if (newType || !framedRef.current) {
+      framedRef.current = false;
+      const { dist, ty } = frameBody(t.camera, model);
+      t.controls.target.set(0, ty, 0);
+      t.camera.position.set(0, ty, dist);
+      t.camera.lookAt(0, ty, 0);
+      t.controls.update();
     }
+  }, [model, bodyType]);
 
-    // Scale factor for children (child bodies use same proportions, just shorter)
-    const isChild = bodyType?.includes('child');
-    const measForBody = isChild
-      ? { ...measurements, height: measurements.height * 0.64 }
-      : measurements;
-
-    const body = buildSmoothBody(measForBody);
-    t.scene.add(body);
-    bodyRef.current = body;
-
-    // Recentre camera on new waist height
-    const d = deriveBodyDims(measForBody);
-    const target = d.waistH;
-    t.controls.target.set(0, target, 0);
-    t.camera.position.set(0, target, d.H * 2.5);
-    t.camera.lookAt(0, target, 0);
-    t.controls.update();
-
+  // ── Mesh the body (worker, debounced) ───────────────────────────────────
+  // The old mesh stays on screen until the new one arrives, so editing a
+  // measurement never flashes an empty scene.
+  useEffect(() => {
+    if (!measurements) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const data = await requestAvatarMesh(measurements, bodyType, BODY_SPACING);
+      const t = threeRef.current;
+      if (cancelled || !t) return;
+      if (bodyRef.current) { disposeObject(bodyRef.current); t.scene.remove(bodyRef.current); }
+      const body = buildBodyMesh(data);
+      t.scene.add(body);
+      bodyRef.current = body;
+      setBodyInfo({ ready: true, ms: data.ms });
+    }, bodyRef.current ? BODY_DEBOUNCE : 0);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [measurements, bodyType]);
 
-  // ── Pattern overlay ──────────────────────────────────────────────────────
+  // ── Drape the pattern onto the body (live sync) ──────────────────────────
   useEffect(() => {
     const t = threeRef.current;
     if (!t) return;
+    // any edit ends a simulation: the live drape takes over again
+    if (simRef.current) { simRef.current.run.cancel(); simRef.current = null; }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the drape is an external (Three.js) system
+    setSim(s => (s.state === 'idle' ? s : { state: 'idle', frame: 0, ms: 0, reason: '' }));
+    const prev = garmentRef.current;
+    if (prev) {
+      disposeObject(prev.group);
+      t.scene.remove(prev.group);
+      garmentRef.current = null;
+    }
+    const prevInstances = instancesRef.current;
+    instancesRef.current = [];
+    if (!patternState || !drapeBody) {
+       
+      setStats({ ms: 0, pieces: 0 });
+      return;
+    }
 
-    if (patternRef.current) {
-      disposeObject(patternRef.current);
-      t.scene.remove(patternRef.current);
-      patternRef.current = null;
+    const t0 = performance.now();
+    let instances = [];
+    try {
+      instances = drapePattern(patternState, drapeBody);
+    } catch (err) {
+      console.warn('drape failed', err);
     }
-    if (patternState && measurements) {
-      const d = deriveBodyDims(measurements);
-      const lines = buildPatternLines(patternState, d.waistH);
-      if (lines) { t.scene.add(lines); patternRef.current = lines; }
+    const garment = buildGarment(instances, fabricColor);
+    garment.handles.forEach(h => { h.visible = showHandlesRef.current; });
+    // keep the handle being dragged highlighted and under the finger across rebuilds
+    const ds = dragRef.current;
+    if (ds) {
+      const again = garment.handles.find(h => h.userData.handle.pointId === ds.pointId &&
+        instances[h.userData.handle.instance].sx === ds.sx);
+      if (again) {
+        again.material.color.setHex(HANDLE_ACTIVE);
+        again.position.copy(ds.handle.position);
+        ds.handle = again;
+      }
     }
-  }, [patternState, measurements]);
+    void prevInstances;
+    t.scene.add(garment.group);
+    garmentRef.current = garment;
+    instancesRef.current = instances;
+    const ms = performance.now() - t0;
+    setStats({ ms, pieces: new Set(instances.map(i => i.key)).size });
+   
+  }, [patternState, drapeBody, fabricColor, drapeVersion]);
+
+  // ── Cloth simulation (on demand, off the main thread) ───────────────────
+  const startSimulation = useCallback(() => {
+    const t = threeRef.current;
+    if (!t || !patternState || !drapeBody || !measurements || simRef.current) return;
+    let simInstances;
+    try {
+      // the solver drapes at a coarser spacing (fewer particles, same shape)
+      simInstances = drapePattern(patternState, drapeBody, CLOTH_MESH);
+    } catch (err) {
+      console.warn('drape failed', err);
+      return;
+    }
+    const prev = garmentRef.current;
+    if (prev) { disposeObject(prev.group); t.scene.remove(prev.group); }
+    const garment = buildGarment(simInstances, fabricColor, { seams: false, handles: false });
+    t.scene.add(garment.group);
+    garmentRef.current = garment;
+    instancesRef.current = [];
+    simStatsRef.current = null;
+    setSim({ state: 'running', frame: 0, ms: 0, reason: '' });
+
+    const token = {};
+    const live = () => simRef.current && simRef.current.token === token;
+    const run = simulateCloth({
+      measurements, bodyType, instances: simInstances,
+      onFrame(positions, info) {
+        if (!live()) return;
+        info.offsets.forEach((off, k) => {
+          const geo = garment.geos[k];
+          if (!geo) return;
+          const attr = geo.attributes.position;
+          attr.array.set(positions.subarray(off * 3, off * 3 + attr.count * 3));
+          attr.needsUpdate = true;
+          geo.computeVertexNormals();
+          geo.computeBoundingSphere();
+        });
+        setSim(s => ({ ...s, frame: info.frame }));
+      },
+      onDone(info) {
+        if (!live()) return;
+        simRef.current = null;
+        simStatsRef.current = info;
+        setSim({ state: 'done', frame: info.frame, ms: info.ms, reason: info.reason });
+      },
+    });
+    simRef.current = { run, token };
+  }, [patternState, drapeBody, measurements, bodyType, fabricColor]);
+
+  const stopSimulation = useCallback(() => { simRef.current?.run.cancel(); }, []);
+  const resetDrape = useCallback(() => setDrapeVersion(v => v + 1), []);
 
   // ── Camera presets ───────────────────────────────────────────────────────
   const setCameraPreset = useCallback((preset) => {
     const t = threeRef.current;
-    if (!t || !measurements) return;
-    const d  = deriveBodyDims(measurements);
-    const ty = d.waistH;
-    const dist = d.H * 2.5;
+    if (!t || !model) return;
+    const { dist, ty } = frameBody(t.camera, model);
     t.controls.target.set(0, ty, 0);
     switch (preset) {
       case 'front': t.camera.position.set(0,   ty,  dist); break;
@@ -370,32 +563,69 @@ export default function MannequinViewer({ measurements, patternState, bodyType =
     }
     t.camera.lookAt(0, ty, 0);
     t.controls.update();
-  }, [measurements]);
+  }, [model]);
+  useEffect(() => { setPresetRef.current = setCameraPreset; }, [setCameraPreset]);
+
+  const pill = {
+    padding: compact ? '7px 11px' : '3px 9px', fontSize: compact ? 11 : 10,
+    fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.06em',
+    backgroundColor: 'rgba(22,27,34,0.85)', color: 'var(--color-text-dim)',
+    border: '1px solid var(--color-border)', borderRadius: 4, cursor: 'pointer',
+    backdropFilter: 'blur(4px)',
+  };
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+    <div
+      data-testid="viewer3d"
+      data-drape-ms={stats.ms.toFixed(1)}
+      data-drape-pieces={stats.pieces}
+      data-body-ready={bodyInfo.ready ? 'true' : 'false'}
+      data-body-ms={bodyInfo.ms.toFixed(0)}
+      data-sim-state={sim.state}
+      data-sim-frame={sim.frame}
+      style={{ position: 'relative', width: '100%', height: '100%' }}
+    >
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
 
+      {stats.pieces > 0 && (
+        <div style={{
+          position: 'absolute', top: 8, left: 8, fontSize: 10, fontFamily: 'var(--font-mono)',
+          color: 'var(--color-text-dim)', background: 'rgba(13,17,23,0.7)', padding: '3px 7px', borderRadius: 4,
+          pointerEvents: 'none',
+        }}>
+          {sim.state === 'idle' && <>{stats.pieces} piece{stats.pieces === 1 ? '' : 's'} · drape {stats.ms.toFixed(0)} ms</>}
+          {sim.state === 'running' && <>simulating · frame {sim.frame}</>}
+          {sim.state === 'done' && <>{sim.reason === 'cancelled' ? 'stopped' : 'settled'} · {sim.frame} frames · {(sim.ms / 1000).toFixed(1)} s</>}
+        </div>
+      )}
+
       <div style={{
-        position: 'absolute', bottom: 10, left: '50%',
-        transform: 'translateX(-50%)',
-        display: 'flex', gap: 4,
+        position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)',
+        display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center', width: 'max-content', maxWidth: '96%',
       }}>
         {PRESETS.map(p => (
-          <button key={p} onClick={() => setCameraPreset(p)} style={{
-            padding: '3px 9px', fontSize: 10,
-            fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
-            letterSpacing: '0.06em',
-            backgroundColor: 'rgba(22,27,34,0.85)',
-            color: 'var(--color-text-dim)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 4, cursor: 'pointer',
-            backdropFilter: 'blur(4px)',
-          }}
-          onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-text)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = 'var(--color-text-dim)'; e.currentTarget.style.borderColor = 'var(--color-border)'; }}
-          >{p}</button>
+          <button key={p} onClick={() => setCameraPreset(p)} style={pill}>{p}</button>
         ))}
+        {sim.state === 'idle' && (
+          <button
+            data-testid="toggle-handles"
+            onClick={() => setShowHandles(v => !v)}
+            style={{ ...pill, color: showHandles ? 'var(--color-point)' : 'var(--color-text-dim)' }}
+          >
+            points
+          </button>
+        )}
+        {stats.pieces > 0 && (
+          <button
+            data-testid="simulate"
+            onClick={sim.state === 'idle' ? startSimulation : sim.state === 'running' ? stopSimulation : resetDrape}
+            title={sim.state === 'idle' ? 'Let the fabric settle under gravity (cloth physics)'
+              : sim.state === 'running' ? 'Stop the simulation here' : 'Back to the live drape'}
+            style={{ ...pill, color: sim.state === 'running' ? 'var(--color-point)' : 'var(--color-accent, #58a6ff)' }}
+          >
+            {sim.state === 'idle' ? 'simulate' : sim.state === 'running' ? 'stop' : 'reset'}
+          </button>
+        )}
       </div>
     </div>
   );

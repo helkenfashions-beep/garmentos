@@ -85,6 +85,49 @@ Never approximate the crotch curve with a simple arc. Always use bezier.
 
 ---
 
+## 3b. THE TROUSER BLOCK STANDARD — LOCKED (27 Sep 2026)
+
+Benson approved the classic Aldrich trouser block ("3 is the most accurate … use 3 as the standard and true pattern block"). It lives in `src/lib/blocks/trouserBlock.js` and every other part of the system (3D body, drape, measurements, tests) is built backwards from it.
+
+What defines it:
+- Each panel is drafted around its own CREASE, halfway between side seam and fork tip at the crotch line; knee and hem split evenly on the crease
+- Front: waist WC/4 + 2cm (incl. dart), hip Hip/4 + ease, fly straight down CF then bezier to the fork
+- Back: seat Seat/4 + 5cm, waist WC/4 + 5cm (incl. darts), CB leans 3.5cm toward the side and is raised 2.5cm (pitched waist), deep bezier seat curve, fork 1.6 × front and dropped 1cm
+- Back leg 4cm wider than front at knee and hem
+- Outseam French curve flips at hip line + (hip to knee length) / 2; inseam fork→knee hollowed 1cm; knee→hem ruled straight; grainline on each crease
+- Vertical lengths (hip depth, waist-to-knee, waist-to-ankle) come from `legLengths()` in `src/lib/body/dims.js` — the SAME source the 3D body uses
+
+How it is locked:
+- `trouserBlock.standard.test.js` asserts every drafting rule above for 4 sizes × 3 fits and pins the geometry in a snapshot
+- If those tests fail, the block changed. Do NOT "fix" the tests or run `vitest -u` unless the new shape has been approved by the pattern maker
+
+The 3D side follows the block: the parametric avatar (§3c) and a drape that eases the 1cm back-fork drop, lays each panel's crotch seam along the body's centre line by arc length so the forks meet under the crotch, and never tears (tested by stretch across 5 body sizes).
+
+## 3c. THE PARAMETRIC AVATAR (27 Sep 2026)
+
+The mannequin is one signed-distance body in `src/lib/avatar/` — the same field is meshed for display and answers the fabric's collision queries, so what you see is what the fabric touches.
+- `sdf.js` — primitives (round cones, ellipsoids, ellipse sections, smooth min, monotone keyframe curves)
+- `body.js` — `createBodyModel()`: torso lofted through keyframed oval sections (separate front/back depth at the torso bottom: belly runs into the fly, seat curves under), round-cone legs and arms (A-pose, opened to clear the hips), neck, head. Then CALIBRATED: tape-measure girths (convex hull, like a real tape) for chest, waist, hip, seat and upper thigh are iterated to the measurements (±0.4%), and the crotch is moved to exactly one body rise below the waist
+- `mesher.js` — surface nets, closed manifold mesh (checked; the diagonal forearms of the A-pose sometimes need a rebuild on a shifted grid — up to 8 offsets, then a finer grid; in the worker, 0.2–1.5 s)
+- `avatar.js` — `createAvatar()`, `createAvatarModel()`, `bodyForDrape()`, `avatarMeshData()`; `avatar.worker.js` meshes off the main thread
+- Anatomy (28 Sep 2026): the torso loft follows the S of the spine (thoracic kyphosis carries the upper back and shoulders back, lumbar lordosis brings the waist forward, the pelvis tips the seat back); each section has separate front and back depth (ribcage/bust in front, shoulder blades and buttocks behind); the shoulder line slopes ~20° from the neck base to the shoulder point into a rounded deltoid; the arm–torso blend widens only at the armpit (smooth axillary fold) and the A-pose opens enough that the upper arm clears the ribcage below it; the head is a cranium plus a forward jaw, so the neck shows behind
+- Seat (28 Sep 2026): seat and hip sections sit back and deeper at the rear, with a `glute` amount per shape that turns the back half into two gluteal lobes with a shallow cleft (modulation of the section, not added blobs, so tape calibration holds); a sacrum key keeps the S-profile (no shelf); the leg blend widens behind the body so the fold rounds into the thighs. Rear protrudes ~73mm (male) / ~83mm (female) behind the waist back. The drape bridges the cleft on the back crotch seam. Smoothed the same day: the lobes are two mirrored bells (a rounded valley, no V on the centre line) sized by the seat, the back depth/glute/spine curves are blurred (σ 16 mm) below the waist, and the slope correction is blurred and cubic. Tests hold the seat to no bend tighter than 12 mm (8 mm across the cleft), normals turning < 15° per 3 mm, and < 1.2% of the draped seat folded over (`seatFoldShare`). The drape lays fabric beside the crotch seam (d from it on paper → d to its side on the body), not onto the centre line
+- Tailoring lengths: inseam (crotch → floor) fixes the waist height (= inseam + body rise); back waist length (nape → waist) sets the torso length (nape at 86.3% of height, so a longer back = a lower waist; with the inseam also measured, the nape moves instead); sleeve length is laid along the arm from the shoulder point (elbow at 56%); bicep girth (was `upperArmGirth`, still read) is the upper-arm radius at mid-upper-arm; neck circumference is tape-calibrated (head excluded). Inseam, back waist length and sleeve length are automatic until measured (`autoLengths()` in dims.js)
+- Each measurement changes its own region only (tested: hip, upper thigh, body rise, shoulder width, neck, sleeve, back waist length)
+- Drape collision: level (horizontal) push out from each row's wrap centre, then a push along the surface normal; fabric rests 3mm off the skin
+- Tests: `avatar.test.js` (girths, height, crotch height, manifold mesh, crotch saddle, outward normals, speed, local morphs) for 5 bodies
+
+## 3d. CLOTH PHYSICS — PBD SOLVER (28 Sep 2026)
+
+On demand ("simulate" in the 3D view), never continuous: the live 2D ⇄ 3D sync stays on the instant geometric drape. Any edit, new body or "reset" returns to the live drape.
+- `src/lib/cloth/pbd.js` — `buildCloth(instances)` turns drape instances into particles (drape mesh at 15mm spacing). Rest lengths come from the FLAT PATTERN with darts sewn (`sewnXY`), so the cloth relaxes to its true size. Panels are sewn where the drape put their edges together (side seams, inseams, CF, CB, crotch). The waistband (top 10mm on paper) is held at its height and softly in place; long-range tethers stop the legs creeping
+- `createClothSim(cloth, body)` — each frame = 12 substeps: predict → stretch/shear, bending, tethers, seams → collisions in priority order: body SDF (projection along ∇d by the penetration depth, position-based Coulomb friction μs 0.6 / μk 0.35) → seams re-closed → cloth-cloth self-collision (spatial hash, 5mm thickness) → body SDF again (body always wins) → velocities with restitution (default 0: no bounce)
+- Stability: rest lengths ramp from draped to pattern over 20 frames, capped corrections, speed clamp, soft compression (fabric buckles), bending 0.2 (below ~0.1 the mesh shivers)
+- `runner.js` (frame loop, settle detection, cancel) is shared by `cloth.worker.js` and the main-thread fallback in `clothClient.js` (`simulateCloth()`); frames stream back as transferred Float32Arrays
+- Tests: `pbd.test.js` (projection exactness, friction, restitution, self-collision, priority, no explosion, trousers settle on 2 bodies: nothing inside, seams closed, stretch < 1.6), `e2e/cloth.spec.js` (worker used, stop, reset, orbit while running, edits cancel)
+
+---
+
 ## 4. COMPLETE FEATURE MANIFEST
 *Every feature listed here must exist in the final product. Do not omit any of these.*
 
@@ -311,5 +354,5 @@ Never approximate the crotch curve with a simple arc. Always use bezier.
 
 ---
 
-*Last updated: April 2026*
+*Last updated: September 2026 (classic trouser block locked; parametric avatar; PBD cloth solver)*
 *All three research documents should be present in the project directory*

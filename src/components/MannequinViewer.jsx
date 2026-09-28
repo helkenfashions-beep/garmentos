@@ -341,6 +341,8 @@ export default function MannequinViewer({
       },
       setBodyVisible(v) { if (bodyRef.current) bodyRef.current.visible = v; },
       cameraPos() { return camera.position.toArray(); },
+      // finish the orbit's momentum now (tests: software rendering is too slow to wait it out)
+      stopCameraMotion() { controls.enableDamping = false; controls.update(); controls.enableDamping = true; return camera.position.toArray(); },
       bodyBox() {
         if (!bodyRef.current) return null;
         const b = new THREE.Box3().setFromObject(bodyRef.current);

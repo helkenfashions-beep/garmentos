@@ -36,9 +36,9 @@ const FAR = 1e6;
 // down into the fly nearly flush with the thighs, while the seat curves
 // under steeply into the gluteal fold.
 const CAP_FRACTION = {
-  cap0: { a: 0.08, f: 0.18, b: 0.05 },
-  cap1: { a: 0.55, f: 0.72, b: 0.50 },
-  cap2: { a: 0.86, f: 0.93, b: 0.86 },
+  cap0: { a: 0.08, f: 0.18, b: 0.30 },
+  cap1: { a: 0.55, f: 0.72, b: 0.80 },
+  cap2: { a: 0.86, f: 0.93, b: 1.00 },
 };
 
 // Torso cross-sections. Per level:
@@ -54,8 +54,8 @@ const CAP_FRACTION = {
 // Girths are calibrated afterwards, so these set the SHAPE only.
 const SHAPES = {
   male: {
-    seat:     { aspect: 1.20, spine: -10, fb: -0.16 },
-    hip:      { aspect: 1.26, spine: -4,  fb: -0.06 },
+    seat:     { aspect: 1.14, spine: -12, fb: -0.24, glute: 0.20 },
+    hip:      { aspect: 1.22, spine: -6,  fb: -0.14, glute: 0.09 },
     waist:    { aspect: 1.28, spine: 8,   fb: 0.04 },
     chest:    { aspect: 1.32, spine: 2,   fb: 0.08 },
     underarm: { spine: -8,  fb: -0.10 },
@@ -64,8 +64,8 @@ const SHAPES = {
     necktop:  { spine: -2 },
   },
   female: {
-    seat:     { aspect: 1.22, spine: -18, fb: -0.18 },
-    hip:      { aspect: 1.34, spine: -6,  fb: -0.10 },
+    seat:     { aspect: 1.14, spine: -20, fb: -0.24, glute: 0.30 },
+    hip:      { aspect: 1.26, spine: -10, fb: -0.22, glute: 0.15 },
     waist:    { aspect: 1.30, spine: 12,  fb: 0.06 },
     chest:    { aspect: 1.18, spine: 6,   fb: 0.18 },
     underarm: { spine: -6,  fb: -0.02 },
@@ -77,6 +77,20 @@ const SHAPES = {
 
 // Blend radii (mm) where parts meet
 const K_CROTCH = 34;   // torso ↔ thighs: the rounded crotch saddle
+const K_FOLD   = 70;   // …widening behind the body: the buttocks round down into
+                       // the backs of the thighs (the gluteal fold), no shelf
+// Gluteal shape: the BACK half of each torso section between the hip and
+// the gluteal fold is two-lobed — fullest either side of the centre line
+// (the gluteal masses) with a shallow cleft between — instead of a single
+// curve peaking on the spine. `glute` (per level) is how much the lobes add
+// to the back depth at their fullest; the calibration still tapes the
+// section, so girths stay exact.
+const SACRUM_AT = 0.5;     // the sacrum key: halfway from waist to hip line…
+const SACRUM_BACK = 0.2;   // …where the back has gone only 20% of the way out
+const LOBE_AT = 0.42;      // lobe centre, as a share of the half-width
+const LOBE_SPREAD = 0.30;
+const CLEFT = 0.28;        // cleft depth, as a share of the lobe
+const LEG_OVAL = 0.07;   // thigh-top cross-section: 7% narrower across, 7% deeper
 const K_LEG    = 0;    // along a leg: segments share end spheres, so a plain union is already smooth (a blend would add a ring)
 const K_ARM    = 10;   // arm ↔ torso below the armpit (the arm hangs clear)
 const K_AXILLA = 34;   // …widening to this at the armpit: a smooth axillary fold
@@ -104,7 +118,7 @@ function buildRig(m, bodyType) {
   const lv = (y, girth, key) => {
     const sh = shape[key];
     const ax = axesForGirth(girth, sh.aspect);
-    return { y, girth, key, scale: 1, a: ax.a, b: ax.b, bf: ax.b * (1 + sh.fb), bb: ax.b * (1 - sh.fb), cz: sh.spine };
+    return { y, girth, key, scale: 1, a: ax.a, b: ax.b, bf: ax.b * (1 + sh.fb), bb: ax.b * (1 - sh.fb), cz: sh.spine, glute: sh.glute ?? 0 };
   };
   const fixed = (y, a, b, key) => {
     const sh = shape[key] ?? {}, fb = sh.fb ?? 0;
@@ -244,15 +258,67 @@ function compile(rig) {
       ...l, y: Math.min(l.y + rig.crotchShift, seatY - room), scale: 1,
       a: Math.max(l.a, seat.a * seat.scale * f.a),
       bf: Math.max(l.b, seat.bf * seat.scale * f.f), bb: Math.max(l.b, seat.bb * seat.scale * f.b),
+      glute: (seat.glute ?? 0) * ({ cap2: 1.0, cap1: 0.7, cap0: 0 })[l.key],
     };
-  }).map(l => (l.key === 'necktop' || l.key === 'neckbase' ? { ...l, a: l.a * rig.neckScale, bf: l.bf * rig.neckScale, bb: l.bb * rig.neckScale } : l))
-    .sort((p, q) => p.y - q.y);
-  const aCurve  = monotoneCurve(L.map(l => ({ y: l.y, v: l.a * l.scale })));
+  }).map(l => (l.key === 'necktop' || l.key === 'neckbase' ? { ...l, a: l.a * rig.neckScale, bf: l.bf * rig.neckScale, bb: l.bb * rig.neckScale } : l));
+  // Sacrum: between waist and hip the back keeps the lumbar hollow almost to
+  // the sacrum, then rounds out quickly into the buttocks — an S (concave
+  // above, convex below), not a straight ramp from waist to seat. Width and
+  // front follow the waist→hip blend; only the back is held in.
+  {
+    const w = L.find(l => l.key === 'waist'), h = L.find(l => l.key === 'hip');
+    const t = SACRUM_AT;
+    const mix = (p, q, k) => p + (q - p) * k;
+    L.push({
+      key: 'sacrum', fixed: true, scale: 1, y: mix(w.y, h.y, t),
+      a: mix(w.a * w.scale, h.a * h.scale, t), b: 0,
+      bf: mix(w.bf * w.scale, h.bf * h.scale, t),
+      bb: mix(w.bb * w.scale, h.bb * h.scale, SACRUM_BACK),
+      cz: mix(w.cz, h.cz, t), glute: (h.glute ?? 0) * 0.25,
+    });
+  }
+  L.sort((p, q) => p.y - q.y);
+  const aCurve0 = monotoneCurve(L.map(l => ({ y: l.y, v: l.a * l.scale })));
   // front and back half-depths (equal except at the torso bottom)
-  const bfCurve = monotoneCurve(L.map(l => ({ y: l.y, v: (l.bf ?? l.b) * l.scale })));
-  const bbCurve = monotoneCurve(L.map(l => ({ y: l.y, v: (l.bb ?? l.b) * l.scale })));
-  const czCurve = monotoneCurve(L.map(l => ({ y: l.y, v: l.cz })));
+  const bfCurve0 = monotoneCurve(L.map(l => ({ y: l.y, v: (l.bf ?? l.b) * l.scale })));
+  const bbCurve0 = monotoneCurve(L.map(l => ({ y: l.y, v: (l.bb ?? l.b) * l.scale })));
+  const czCurve0 = monotoneCurve(L.map(l => ({ y: l.y, v: l.cz })));
+  const glCurve0 = monotoneCurve(L.map(l => ({ y: l.y, v: l.glute ?? 0 })));
+  // The torso is evaluated millions of times (meshing, drape, cloth): sample
+  // each curve every 2 mm once and interpolate linearly (error ≪ 0.01 mm on
+  // these smooth curves) instead of a binary search + cubic per call.
+  const tabulate = (fn) => {
+    const lo = L[0].y - 40, hi = L[L.length - 1].y + 40, step = 2;
+    const n = Math.ceil((hi - lo) / step) + 1, tab = new Float64Array(n);
+    for (let i = 0; i < n; i++) tab[i] = fn(lo + i * step);
+    return (y) => {
+      const f = (y - lo) / step;
+      if (f <= 0) return tab[0];
+      if (f >= n - 1) return tab[n - 1];
+      const i = f | 0, t = f - i;
+      return tab[i] + (tab[i + 1] - tab[i]) * t;
+    };
+  };
+  const aCurve = tabulate(aCurve0), bfCurve = tabulate(bfCurve0), bbCurve = tabulate(bbCurve0);
+  const czCurve = tabulate(czCurve0), glCurve = tabulate(glCurve0);
   const y0 = L[0].y, y1 = L[L.length - 1].y;
+  // 1/√(1+slope²) for the torso's front and back halves, tabulated every
+  // SLOPE_STEP mm (slope over ±20 mm, so the correction varies slowly)
+  const SLOPE_STEP = 4, e = 20;
+  const nS = Math.ceil((y1 - y0) / SLOPE_STEP) + 1;
+  const slopeF = new Float32Array(nS), slopeB = new Float32Array(nS);
+  for (let i = 0; i < nS; i++) {
+    const yy = y0 + i * SLOPE_STEP;
+    const sa = Math.abs(aCurve(yy + e) - aCurve(yy - e)) / (2 * e);
+    const sf = Math.max(sa, Math.abs(bfCurve(yy + e) - bfCurve(yy - e)) / (2 * e));
+    const sb = Math.max(sa, Math.abs(bbCurve(yy + e) - bbCurve(yy - e)) / (2 * e));
+    slopeF[i] = 1 / Math.sqrt(1 + sf * sf);
+    slopeB[i] = 1 / Math.sqrt(1 + sb * sb);
+  }
+  const slopeFactor = (tab, yc) => {
+    const f = (yc - y0) / SLOPE_STEP, i = Math.min(nS - 2, Math.max(0, Math.floor(f))), t = Math.min(1, Math.max(0, f - i));
+    return tab[i] + (tab[i + 1] - tab[i]) * t;
+  };
 
   const legPts = leg.pts.map((p, i) => ({
     x: legCenterX(d, p.y), y: p.y, z: p.z,
@@ -274,7 +340,9 @@ function compile(rig) {
   const head = { y: d.H - R * 0.9, z: -4, rx: R * 0.78, ry: R * 0.9, rz: R * 0.95 };
   const jaw  = { y: d.H - R * 1.45, z: 24, rx: R * 0.6, ry: R * 0.62, rz: R * 0.62 };
 
-  const legTop = legPts[0].y + legPts[0].r + 20;
+  // (the legs' field is skipped above this; it must clear the widest blend
+  // with the torso, or the cut would show as a seam in the surface)
+  const legTop = legPts[0].y + legPts[0].r + K_FOLD + 10;
   const armBottom = hand.y - hand.r1 - 30;
 
   function torso(x, y, z) {
@@ -284,8 +352,21 @@ function compile(rig) {
     // smooth across the side, since both halves are vertical there
     const front = z >= cz;
     const bc = front ? bfCurve : bbCurve;
-    const b = bc(yc);
-    let d2 = sdEllipse2(x, z - cz, Math.max(a, 1), Math.max(b, 1));
+    let b = bc(yc);
+    // two-lobed seat (back half only): deeper either side of the centre, a
+    // shallow cleft on it. The depth varies smoothly with x, so the field
+    // stays a (slightly conservative) distance — see the Lipschitz factor.
+    let lip = 1;
+    if (!front) {
+      const g = glCurve(yc);
+      if (g > 0.001) {
+        const u = Math.min(1, Math.abs(x) / Math.max(a, 1));
+        const lobe = Math.exp(-(((u - LOBE_AT) / LOBE_SPREAD) ** 2)) - CLEFT * Math.exp(-((u / 0.12) ** 2));
+        b *= 1 + g * lobe;
+        lip = 1 + g * 1.2;
+      }
+    }
+    let d2 = sdEllipse2(x, z - cz, Math.max(a, 1), Math.max(b, 1)) / lip;
     // The cross-section distance is horizontal; where the torso slopes (top of
     // the shoulders, under the seat) the true distance is shorter by cos(slope).
     // Correcting it keeps the field a true distance bound: safe for meshing,
@@ -293,23 +374,40 @@ function compile(rig) {
     // (slope measured over ±12 mm so the correction varies slowly: a factor
     // that changes quickly with height would tilt the gradient — the surface
     // normals — wherever the torso field is far from zero, e.g. on the thighs)
-    const e = 20;
-    const sa = (aCurve(yc + e) - aCurve(yc - e)) / (2 * e);
-    const sb = (bc(yc + e) - bc(yc - e)) / (2 * e);
-    const slope = Math.max(Math.abs(sa), Math.abs(sb));
-    d2 /= Math.sqrt(1 + slope * slope);
+    d2 *= slopeFactor(front ? slopeF : slopeB, yc);
     if (y < y0) { const dy = y0 - y; return d2 > 0 ? Math.hypot(d2, dy) : dy; }
     if (y > y1) { const dy = y - y1; return d2 > 0 ? Math.hypot(d2, dy) : dy; }
     return d2;
   }
 
+  // Thighs are oval near the top — deeper front-to-back than across, as they
+  // press together under the pelvis — rounding out by the knee. Done by
+  // squeezing the leg's field across its own axis (same girth: an ellipse of
+  // 1−e by 1+e has the circle's perimeter to within 0.5%). The distance is
+  // scaled by the squeeze so it stays a safe bound.
+  const kneeY = legPts[2].y, jointY = legPts[0].y;
+  const thighTopY = d.crotchH + rig.crotchShift;
   function legD(xa, y, z) {
     if (y > legTop) return FAR;
+    let px = xa, pz = z, k = 1;
+    if (y > kneeY) {
+      const t0 = Math.min(1, (y - kneeY) / Math.max(1, thighTopY - kneeY));
+      const e = LEG_OVAL * t0 * t0 * (3 - 2 * t0);
+      if (e > 0) {
+        const ax = legSection(Math.min(y, jointY));
+        px = ax.x + (xa - ax.x) / (1 - e);
+        pz = ax.z + (z - ax.z) / (1 + e);
+        k = 1 - e;
+      }
+    }
     let dist = FAR;
     for (let i = 0; i < legPts.length - 1; i++) {
       const p = legPts[i], q = legPts[i + 1];
-      if (y > p.y + p.r + K_LEG || y < q.y - q.r - K_LEG) continue;
-      const s = sdRoundCone(xa, y, z, p.x, p.y, p.z, q.x, q.y, q.z, p.r, q.r);
+      // (skip segments out of reach — but never the top one within the
+      // torso blend's reach, or the skip would show as a seam)
+      const reachUp = i === 0 ? K_FOLD + 10 : K_LEG;
+      if (y > p.y + p.r + reachUp || y < q.y - q.r - K_LEG) continue;
+      const s = sdRoundCone(px, y, pz, p.x, p.y, p.z, q.x, q.y, q.z, p.r, q.r) * k;
       dist = dist === FAR ? s : smin(dist, s, K_LEG);
     }
     if (y < foot.y + foot.ry + K_FOOT) {
@@ -356,7 +454,12 @@ function compile(rig) {
     const xa = x < 0 ? -x : x;
     let dist = y > y0 - 80 ? torso(x, y, z) : FAR;
     const lg = legD(xa, y, z);
-    if (lg !== FAR) dist = dist === FAR ? lg : smin(dist, lg, K_CROTCH);
+    if (lg !== FAR) {
+      // blend radius: the crotch's own at the centre and in front, growing
+      // behind (from 45 mm behind the crotch to 120 mm) for the gluteal fold
+      const t = (-45 - z) / 75, s = t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+      dist = dist === FAR ? lg : smin(dist, lg, K_CROTCH + (K_FOLD - K_CROTCH) * s);
+    }
     if (!opts || opts.arms !== false) {
       const ar = armD(xa, y, z);
       if (ar !== FAR) dist = smin(dist, ar, armBlend(y));

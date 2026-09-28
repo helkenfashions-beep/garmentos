@@ -175,27 +175,41 @@ export function midlinePath(dims) {
   const Y0 = cp[1] + 70;                       // centre of the arc under the crotch
   const cz0 = dims.torsoSection ? dims.torsoSection(Y0).cz : cp[2];
   const top = dims.waistH + 80;
+  // The centre-line profile as a seam sees it. At the back a seam lies
+  // across the buttocks and bridges the cleft between them — there, take the
+  // body's outline over a band ±BRIDGE mm wide. (The front has no cleft.)
+  const BRIDGE = 50;
+  let bridging = false;
+  const sd0 = (y, z) => {
+    let v = sdf(0, y, z);
+    if (bridging) for (let x = 25; x <= BRIDGE; x += 25) { const w = sdf(x, y, z); if (w < v) v = w; }
+    return v;
+  };
   // distance from (0, y0, z0) along (dy, dz) to the skin, plus the gap
   const exit = (y0, z0, dy, dz) => {
-    let r = 0, v = sdf(0, y0, z0);
-    for (let k = 0; k < 200 && v < 0; k++) { r += Math.max(1, -v * 0.9); v = sdf(0, y0 + dy * r, z0 + dz * r); }
+    let r = 0, v = sd0(y0, z0);
+    for (let k = 0; k < 200 && v < 0; k++) { r += Math.max(1, -v * 0.9); v = sd0(y0 + dy * r, z0 + dz * r); }
     let lo = Math.max(0, r - 20), hi = r;
-    for (let k = 0; k < 16; k++) { const mid = (lo + hi) / 2; if (sdf(0, y0 + dy * mid, z0 + dz * mid) < 0) lo = mid; else hi = mid; }
+    for (let k = 0; k < 16; k++) { const mid = (lo + hi) / 2; if (sd0(y0 + dy * mid, z0 + dz * mid) < 0) lo = mid; else hi = mid; }
     return hi;
   };
-  // skin point → pushed out along the surface normal (in the x = 0 plane)
+  // skin point → pushed out along the (bridged) surface normal
   const lift = (y, z) => {
-    const n = dims.normal(0, y, z);
-    const l = Math.hypot(n[1], n[2]) || 1;
-    return [y + (n[1] / l) * off, z + (n[2] / l) * off];
+    const e = 0.75;
+    const ny = sd0(y + e, z) - sd0(y - e, z), nz = sd0(y, z + e) - sd0(y, z - e);
+    const l = Math.hypot(ny, nz) || 1;
+    return [y + (ny / l) * off, z + (nz / l) * off];
   };
   const side = (sgn) => {
+    bridging = sgn < 0;
     const pts = [];
     for (let y = top; y > Y0; y -= 5) {
       const cz = dims.torsoSection ? dims.torsoSection(y).cz : 0;
       pts.push(lift(y, cz + sgn * exit(y, cz, 0, sgn)));
     }
     // round the underside: rays from (Y0, cz0), from horizontal to straight down
+    // (no bridging here: under the seat the band would catch the thighs)
+    bridging = false;
     for (let a = 1; a <= 45; a++) {
       const th = (a / 45) * (PI / 2);
       const dy = -Math.sin(th), dz = sgn * Math.cos(th);
@@ -278,16 +292,23 @@ function trouserMapper(piece, profile, partnerProfile, dims) {
   // nearest point on the centre edge → its arc length and distance
   const edgeXs = edgeYs.map((ey, i) => (i === edgeYs.length - 1 && forkPt) ? forkPt.x
     : edgeX(profile.table.rows.filter(r => r.y <= forkY)[i]));
-  const nearestEdge = (x, y) => {
-    let best = Infinity, bs = 0;
-    for (let i = 0; i < edgeYs.length - 1; i++) {
+  // (the edge runs down the page: edgeYs increase, so search outward from the
+  // segment at this height and stop once the rows are farther than the best)
+  const nearestEdge = (x, y, maxD = Infinity) => {
+    const n = edgeYs.length;
+    let best = maxD, bs = 0;
+    const seg = (i) => {
       const ax = edgeXs[i], ay = edgeYs[i], bx = edgeXs[i + 1], by = edgeYs[i + 1];
-      if (Math.min(Math.abs(y - ay), Math.abs(y - by)) > best && (y - ay) * (y - by) > 0) continue;
       const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy || 1;
       const t = clamp(((x - ax) * dx + (y - ay) * dy) / l2, 0, 1);
       const d = Math.hypot(x - ax - dx * t, y - ay - dy * t);
       if (d < best) { best = d; bs = edgeS[i] + (edgeS[i + 1] - edgeS[i]) * t; }
-    }
+    };
+    if (n < 2) return { d: best, s: bs };
+    let lo = 0, hi = n - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (edgeYs[mid] > y) hi = mid; else lo = mid; }
+    for (let i = lo; i < n - 1; i++) { if (edgeYs[i] - y > best) break; seg(i); }
+    for (let i = lo - 1; i >= 0; i--) { if (y - edgeYs[i + 1] > best) break; seg(i); }
     return { d: best, s: bs };
   };
   const edgeSAt = (y) => {
@@ -421,8 +442,8 @@ function trouserMapper(piece, profile, partnerProfile, dims) {
         * (1 - smoothstep(riseDepth, riseDepth + 30, h));
       // each point follows the nearest part of the seam (near the fork the
       // seam runs across the rows, not down them)
-      const ne = ramp > 0 ? nearestEdge(x, y) : null;
-      const wc = ne ? ramp * (1 - smoothstep(0, 0.45 * w, ne.d)) : 0;
+      const ne = ramp > 0 ? nearestEdge(x, y, 0.45 * w) : null;
+      const wc = ne && ne.d < 0.45 * w ? ramp * (1 - smoothstep(0, 0.45 * w, ne.d)) : 0;
       if (wc > 0) {
         const [my, mz] = alongMidline(mid, (ne.s - edgeWaist) * seamScale);
         px += (0 - px) * wc;
@@ -546,12 +567,13 @@ function buildFabricMesh(piece, profile, map, sx, { rowStep = MESH_ROW_STEP, col
     const e = rowExtent(piece.outline, y);
     if (!e) { prevStart = -1; continue; }
     const start = vcount;
+    const rowDarts = dartIntervalsAt(piece.darts, y);
     for (let j = 0; j <= cols; j++) {
       const x = e.xmin + (e.xmax - e.xmin) * (j / cols);
       const p = map(x, y);
       positions.push(p[0] * sx, p[1], p[2]);
       patternXY.push(x, y);
-      sewnXY.push(closeDarts(x, dartIntervalsAt(piece.darts, y)), y);
+      sewnXY.push(closeDarts(x, rowDarts), y);
       vcount++;
     }
     if (prevStart >= 0) {

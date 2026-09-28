@@ -117,20 +117,9 @@ test('the 3D view keeps its angle while measurements change', async ({ page, isM
   const to = { x: v.x + v.width * 0.5, y: v.y + v.height * 0.4 };
   if (isMobile) await touchDrag(page, from, to);
   else { await page.mouse.move(from.x, from.y); await page.mouse.down(); await page.mouse.move(to.x, to.y, { steps: 8 }); await page.mouse.up(); }
-  // wait for the orbit's momentum (damping) to stop — slow in software rendering
-  // (software rendering can skip frames, so one still sample is not enough:
-  // require three quiet samples in a row)
-  const settle = async () => {
-    let prev = await page.evaluate(() => window.__garmentos3d.cameraPos());
-    let quiet = 0;
-    for (let k = 0; k < 120 && quiet < 3; k++) {
-      await page.waitForTimeout(250);
-      const cur = await page.evaluate(() => window.__garmentos3d.cameraPos());
-      quiet = Math.hypot(cur[0] - prev[0], cur[1] - prev[1], cur[2] - prev[2]) < 1 ? quiet + 1 : 0;
-      prev = cur;
-    }
-    return prev;
-  };
+  // finish the orbit's momentum at once: software rendering runs at a few
+  // frames a second, so waiting for the damping to die out is slow and flaky
+  const settle = () => page.evaluate(() => window.__garmentos3d.stopCameraMotion());
   const azimuth = (c) => Math.atan2(c[0], c[2]) * 180 / Math.PI;   // 0° = front view
   await openMeasurements(page, isMobile);
   const cam0 = await settle();
@@ -138,6 +127,7 @@ test('the 3D view keeps its angle while measurements change', async ({ page, isM
 
   await page.getByTestId('m-waist').fill('92');
   await expect(page.getByTestId('viewer3d')).toHaveAttribute('data-drape-pieces', '2');
+  await page.waitForTimeout(1500);                    // give a (wrong) reframe time to happen
   const cam1 = await settle();
   // a reset would snap the camera back to the front view (azimuth 0°)
   expect(Math.abs(azimuth(cam0))).toBeGreaterThan(15);

@@ -300,6 +300,31 @@ Benson asked for more anatomical realism: the missing tailoring measurements (in
 - A soft crease remains at the groin and a faint one at the neck base.
 - No hands/fingers detail, no face.
 
+## Stage 3g — Seat and Hip Volume
+Status: COMPLETE
+Date: September 28 2026
+
+### Why
+Benson: the buttocks and seat looked too flat, with no real rear volume. The seat must protrude like a real gluteal mass, for men and women, with a smooth waist → hip → seat transition and no pinching in the mesh.
+
+### What changed
+- SHAPES: the seat and hip sections sit further back (spine cz male −12/−6, female −20/−10) with more back depth (fb −0.24 seat; hip −0.14 male, −0.22 female) and a new `glute` amount (male 0.20/0.09, female 0.30/0.15). The caps below the seat carry the glute down into the fold.
+- A sacrum key between waist and hip keeps the lower back flat before the seat bulges out: the profile is an S, no shelf.
+- The back half of each section is shaped into two gluteal lobes with a shallow cleft (a smooth modulation of the half-depth across the width, not separate blobs, so the girth calibration still hits the tape).
+- The leg-torso blend grows behind the body, so the gluteal fold rounds into the thighs; thigh tops are slightly oval.
+- Curves are tabulated (2mm) so the drape stays fast. The drape bridges the cleft at the back crotch seam (fabric spans it like a real trouser).
+- Result: rear protrudes ~73mm (male) / ~83mm (female) behind the waist back; hip width/depth ratio ~1.3/1.4.
+
+### Tests
+- Unit: 277 (new "seat and hips have real rear volume": rear protrusion, lobes and cleft depth, S-profile without a shelf, hip proportions; manifold sweep) — run 3×.
+- E2E: all specs, 3 viewports — run 3×.
+
+### Known limitations
+- A faint crease stays at the gluteal fold.
+- A fuller seat is where a fixed block strains: the cloth crotch band tolerance is 2.2 (same as the drape tests). The buttocks-prominence toggle (manifest) is the proper next step.
+- The drape timing test now measures warm runs (< 80ms).
+- The e2e "3D view keeps its angle" test was flaky before this change (2 of 8 on the old code): it waited out the orbit momentum by wall time. A test hook now finishes the momentum at once; 15/15 since.
+
 ## Stage 4 — Shirt Block Engine
 Status: NOT STARTED
 

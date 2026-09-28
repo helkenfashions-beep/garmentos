@@ -319,3 +319,55 @@ describe('mesh stays a closed manifold whatever the tailoring measurements', () 
     });
   }
 });
+
+// ── seat and hip: gluteal volume ────────────────────────────────────────────
+
+describe('seat and hips have real rear volume', () => {
+  const bodies = {
+    male_adult: [M, { minOut: 55 }],
+    female_adult: [{ ...M, waist: 700, hip: 1000, seat: 1010, chest: 900, upperThighGirth: 600, height: 1650, bodyRise: 270, shoulderWidth: 400 }, { minOut: 65 }],
+  };
+  for (const [bt, [m, want]] of Object.entries(bodies)) {
+    const md = createAvatar(m, bt, { spacing: SPACING }).model, d = md.dims;
+    const backAt = (x, y) => { for (let z = -320; z < 320; z += 0.5) if (md.sdf(x, y, z, { arms: false }) < 0) return z; return null; };
+    const rearAt = (y) => Math.min(backAt(0, y), backAt(40, y), backAt(60, y), backAt(80, y));   // furthest back across the seat
+
+    it(`${bt}: the buttocks stand well out behind the small of the back`, () => {
+      const waistBack = backAt(0, d.waistH);
+      let fullest = Infinity; for (let y = d.hipH + 20; y > d.crotchH; y -= 5) fullest = Math.min(fullest, rearAt(y));
+      expect(waistBack - fullest).toBeGreaterThan(want.minOut);
+    });
+
+    it(`${bt}: seen from behind, two rounded masses with a shallow cleft between`, () => {
+      const y = (d.hipH + d.seatH) / 2;
+      const centre = backAt(0, y), lobe = Math.min(backAt(40, y), backAt(60, y));
+      expect(centre - lobe).toBeGreaterThan(2);    // lobes further back than the centre line…
+      expect(centre - lobe).toBeLessThan(25);      // …but only a shallow cleft
+    });
+
+    it(`${bt}: the lower back is an S — hollow at the waist, rounding smoothly into the seat, no shelf`, () => {
+      const ys = []; for (let y = d.waistH; y > d.crotchH + 10; y -= 10) ys.push(y);
+      const r = ys.map(rearAt);
+      const iMax = r.indexOf(Math.min(...r));
+      // from the waist down to the fullest point the rear only moves out, never steeper than 60°
+      for (let i = 1; i <= iMax; i++) {
+        expect(r[i]).toBeLessThanOrEqual(r[i - 1] + 0.5);
+        expect(r[i - 1] - r[i]).toBeLessThan(10 * Math.tan(60 * Math.PI / 180));
+      }
+      // concave above (the hollow), convex into the seat: the rear goes out
+      // faster in the lower half of that run than in the upper half
+      const half = Math.floor(iMax / 2);
+      expect((r[half] - r[iMax])).toBeGreaterThan(r[0] - r[half]);
+      // the fullest point is in the seat region, not up at the hip line
+      expect(ys[iMax]).toBeLessThan(d.hipH + 15);
+    });
+
+    it(`${bt}: hip width and depth are in human proportion (not a wide, flat slab)`, () => {
+      let w = 0; for (let x = 300; x > 0; x -= 0.5) { let hit = false; for (let z = -250; z < 250; z += 2) if (md.sdf(x, d.hipH, z, { arms: false }) < 0) { hit = true; break; } if (hit) { w = 2 * x; break; } }
+      let front = -Infinity; for (let x = -w / 2; x <= w / 2; x += 5) for (let z = 300; z > -300; z -= 1) if (md.sdf(x, d.hipH, z, { arms: false }) < 0) { front = Math.max(front, z); break; }
+      const depth = front - rearAt(d.hipH);
+      expect(w / depth).toBeGreaterThan(1.15);
+      expect(w / depth).toBeLessThan(1.55);
+    });
+  }
+});

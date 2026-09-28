@@ -85,12 +85,24 @@ const K_FOLD   = 70;   // …widening behind the body: the buttocks round down i
 // curve peaking on the spine. `glute` (per level) is how much the lobes add
 // to the back depth at their fullest; the calibration still tapes the
 // section, so girths stay exact.
+// The lobes are two mirrored bells, so the cleft is the smooth, wide valley
+// between them (no V on the centre line for cloth to catch in), and their
+// width is set by the SEAT, so they run straight down into the fold instead
+// of pinching toward the centre as the torso narrows under the seat.
 const SACRUM_AT = 0.5;     // the sacrum key: halfway from waist to hip line…
-const SACRUM_BACK = 0.2;   // …where the back has gone only 20% of the way out
-const LOBE_AT = 0.42;      // lobe centre, as a share of the half-width
+const SACRUM_BACK = 0.3;   // …where the back has gone only 30% of the way out
+const LOBE_AT = 0.40;      // lobe centre, as a share of the seat half-width
 const LOBE_SPREAD = 0.30;
-const CLEFT = 0.28;        // cleft depth, as a share of the lobe
-const LEG_OVAL = 0.07;   // thigh-top cross-section: 7% narrower across, 7% deeper
+const LOBE_LIP = 2.0;      // steepest change of the back depth across x, per unit of glute
+// Below the waist the back depth and the gluteal amount are blurred up and
+// down the body (Gaussian, this σ in mm) after the keyframe curve: the keys
+// (sacrum, hip, seat, fold) can sit only 25 mm apart on some bodies, and a
+// curve forced through them makes a shelf. Blurring keeps the volume but
+// spreads it, and a blur of a monotone curve is still monotone.
+const BACK_BLUR = 16;
+const BLUR_FADE = 60;      // …fading out over this far above the waist
+const LEG_MID = 10;      // mm: the legs' mirror seam is rounded over this far either side of the centre
+const LEG_OVAL = 0.07;  // thigh-top cross-section: 7% narrower across, 7% deeper
 const K_LEG    = 0;    // along a leg: segments share end spheres, so a plain union is already smooth (a blend would add a ring)
 const K_ARM    = 10;   // arm ↔ torso below the armpit (the arm hangs clear)
 const K_AXILLA = 34;   // …widening to this at the armpit: a smooth axillary fold
@@ -103,6 +115,47 @@ const K_FOOT   = 18;
 function axesForGirth(girth, aspect) {
   const b = girth / ellipsePerimeter(aspect, 1);
   return { a: aspect * b, b };
+}
+
+/**
+ * Gluteal lobes across the back (u = x / seat half-width): two mirrored
+ * bells, 1 at their fullest, with a smooth valley (flat on the centre line)
+ * between them.
+ */
+const LOBE_NORM = 1 + Math.exp(-((2 * LOBE_AT / LOBE_SPREAD) ** 2));
+function lobeShape(u) {
+  const p = (u - LOBE_AT) / LOBE_SPREAD, q = (u + LOBE_AT) / LOBE_SPREAD;
+  return (Math.exp(-p * p) + Math.exp(-q * q)) / LOBE_NORM;
+}
+
+/**
+ * Gaussian blur (σ mm) of a table sampled every `step` mm from `lo`, applied
+ * fully below yTop and fading back to the original over `fade` mm above it.
+ * Ends are clamped, so a flat end stays flat.
+ */
+function blurBelow(tab, lo, step, sigma, yTop, fade) {
+  const n = tab.length, r = Math.ceil((3 * sigma) / step);
+  const w = [];
+  for (let j = -r; j <= r; j++) w.push(Math.exp(-0.5 * ((j * step) / sigma) ** 2));
+  const wSum = w.reduce((s, v) => s + v, 0);
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = 0;
+    for (let j = -r; j <= r; j++) s += w[j + r] * tab[Math.min(n - 1, Math.max(0, i + j))];
+    const t = Math.min(1, Math.max(0, (lo + i * step - yTop) / fade)), k = t * t * (3 - 2 * t);
+    out[i] = (s / wSum) * (1 - k) + tab[i] * k;
+  }
+  return out;
+}
+
+/** Read a table at fractional index f with a Catmull-Rom cubic (C1, no overshoot on smooth data). */
+function catmullRom(tab, f) {
+  const n = tab.length;
+  if (f <= 0) return tab[0];
+  if (f >= n - 1) return tab[n - 1];
+  const i = Math.floor(f), t = f - i;
+  const p0 = tab[Math.max(0, i - 1)], p1 = tab[i], p2 = tab[i + 1], p3 = tab[Math.min(n - 1, i + 2)];
+  return p1 + 0.5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)));
 }
 
 /** Build the part layout (rig) from measurements. Calibration edits it in place. */
@@ -249,6 +302,7 @@ function compile(rig) {
   // seat section, so the body curves under the seat instead of stepping in.
   const seat = levels.find(l => l.key === 'seat');
   const seatY = seat.y;
+  const lobeA = Math.max(seat.a * seat.scale, 1);
   const L = levels.map(l => {
     if (!l.key.startsWith('cap')) return { ...l };
     const span = Math.max(20, seatY - d.crotchH);
@@ -287,26 +341,34 @@ function compile(rig) {
   // The torso is evaluated millions of times (meshing, drape, cloth): sample
   // each curve every 2 mm once and interpolate linearly (error ≪ 0.01 mm on
   // these smooth curves) instead of a binary search + cubic per call.
-  const tabulate = (fn) => {
-    const lo = L[0].y - 40, hi = L[L.length - 1].y + 40, step = 2;
-    const n = Math.ceil((hi - lo) / step) + 1, tab = new Float64Array(n);
-    for (let i = 0; i < n; i++) tab[i] = fn(lo + i * step);
-    return (y) => {
-      const f = (y - lo) / step;
-      if (f <= 0) return tab[0];
-      if (f >= n - 1) return tab[n - 1];
-      const i = f | 0, t = f - i;
-      return tab[i] + (tab[i + 1] - tab[i]) * t;
-    };
+  const TAB_LO = L[0].y - 40, TAB_STEP = 2;
+  const TAB_N = Math.ceil((L[L.length - 1].y + 40 - TAB_LO) / TAB_STEP) + 1;
+  const sample = (fn) => {
+    const tab = new Float64Array(TAB_N);
+    for (let i = 0; i < TAB_N; i++) tab[i] = fn(TAB_LO + i * TAB_STEP);
+    return tab;
   };
-  const aCurve = tabulate(aCurve0), bfCurve = tabulate(bfCurve0), bbCurve = tabulate(bbCurve0);
-  const czCurve = tabulate(czCurve0), glCurve = tabulate(glCurve0);
+  const lookup = (tab) => (y) => {
+    const f = (y - TAB_LO) / TAB_STEP;
+    if (f <= 0) return tab[0];
+    if (f >= TAB_N - 1) return tab[TAB_N - 1];
+    const i = f | 0, t = f - i;
+    return tab[i] + (tab[i + 1] - tab[i]) * t;
+  };
+  const waistY = L.find(l => l.key === 'waist').y;
+  const blurred = (tab) => blurBelow(tab, TAB_LO, TAB_STEP, BACK_BLUR, waistY, BLUR_FADE);
+  const aCurve = lookup(sample(aCurve0)), bfCurve = lookup(sample(bfCurve0));
+  const bbCurve = lookup(blurred(sample(bbCurve0)));
+  const czCurve = lookup(blurred(sample(czCurve0))), glCurve = lookup(blurred(sample(glCurve0)));
   const y0 = L[0].y, y1 = L[L.length - 1].y;
   // 1/√(1+slope²) for the torso's front and back halves, tabulated every
-  // SLOPE_STEP mm (slope over ±20 mm, so the correction varies slowly)
+  // SLOPE_STEP mm (slope over ±20 mm), blurred and read back with a cubic:
+  // the factor multiplies the distance, so wherever the torso field is far
+  // from zero (in a blend with a leg or arm) any kink in it with height
+  // would kink the surface normals.
   const SLOPE_STEP = 4, e = 20;
   const nS = Math.ceil((y1 - y0) / SLOPE_STEP) + 1;
-  const slopeF = new Float32Array(nS), slopeB = new Float32Array(nS);
+  let slopeF = new Float64Array(nS), slopeB = new Float64Array(nS);
   for (let i = 0; i < nS; i++) {
     const yy = y0 + i * SLOPE_STEP;
     const sa = Math.abs(aCurve(yy + e) - aCurve(yy - e)) / (2 * e);
@@ -315,10 +377,9 @@ function compile(rig) {
     slopeF[i] = 1 / Math.sqrt(1 + sf * sf);
     slopeB[i] = 1 / Math.sqrt(1 + sb * sb);
   }
-  const slopeFactor = (tab, yc) => {
-    const f = (yc - y0) / SLOPE_STEP, i = Math.min(nS - 2, Math.max(0, Math.floor(f))), t = Math.min(1, Math.max(0, f - i));
-    return tab[i] + (tab[i + 1] - tab[i]) * t;
-  };
+  slopeF = blurBelow(slopeF, y0, SLOPE_STEP, 8, Infinity, 1);
+  slopeB = blurBelow(slopeB, y0, SLOPE_STEP, 8, Infinity, 1);
+  const slopeFactor = (tab, yc) => catmullRom(tab, (yc - y0) / SLOPE_STEP);
 
   const legPts = leg.pts.map((p, i) => ({
     x: legCenterX(d, p.y), y: p.y, z: p.z,
@@ -360,10 +421,8 @@ function compile(rig) {
     if (!front) {
       const g = glCurve(yc);
       if (g > 0.001) {
-        const u = Math.min(1, Math.abs(x) / Math.max(a, 1));
-        const lobe = Math.exp(-(((u - LOBE_AT) / LOBE_SPREAD) ** 2)) - CLEFT * Math.exp(-((u / 0.12) ** 2));
-        b *= 1 + g * lobe;
-        lip = 1 + g * 1.2;
+        b *= 1 + g * lobeShape(x / lobeA);
+        lip = 1 + g * LOBE_LIP;
       }
     }
     let d2 = sdEllipse2(x, z - cz, Math.max(a, 1), Math.max(b, 1)) / lip;
@@ -453,7 +512,13 @@ function compile(rig) {
   function sdf(x, y, z, opts) {
     const xa = x < 0 ? -x : x;
     let dist = y > y0 - 80 ? torso(x, y, z) : FAR;
-    const lg = legD(xa, y, z);
+    // (the legs are one leg mirrored, and |x| has a corner on the centre line
+    // that the wide fold blend would carry into the back of the crotch, just
+    // where the back seam lies: round it off within LEG_MID of the centre —
+    // |x|·(2u − u²) is flat at 0, meets |x| smoothly at LEG_MID and never
+    // exceeds it, so the saddle between the thighs stays exactly where it was)
+    const u = xa / LEG_MID;
+    const lg = legD(u < 1 ? xa * u * (2 - u) : xa, y, z);
     if (lg !== FAR) {
       // blend radius: the crotch's own at the centre and in front, growing
       // behind (from 45 mm behind the crotch to 120 mm) for the gluteal fold

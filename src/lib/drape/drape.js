@@ -446,7 +446,11 @@ function trouserMapper(piece, profile, partnerProfile, dims) {
       const wc = ne && ne.d < 0.45 * w ? ramp * (1 - smoothstep(0, 0.45 * w, ne.d)) : 0;
       if (wc > 0) {
         const [my, mz] = alongMidline(mid, (ne.s - edgeWaist) * seamScale);
-        px += (0 - px) * wc;
+        // beside the seam, as sewn: fabric d from the seam on paper lies d to
+        // the side of it on the body (the collision then lays it on the skin).
+        // Pulling it all to x = 0 stacked the rows near the seam into a few
+        // mm, and the drape folded over itself down the back crotch seam.
+        px += (ne.d - px) * wc;
         pz += (mz - pz) * wc;
         Yp += (my - Y) * wc;
         seamW = wc;

@@ -362,6 +362,44 @@ describe('seat and hips have real rear volume', () => {
       expect(ys[iMax]).toBeLessThan(d.hipH + 15);
     });
 
+    // cloth rests on this surface: any crease tighter than the fabric mesh
+    // (15 mm) catches it and bunches it up
+    const skinBack = (x, y) => {
+      let z = -400; while (z < 300 && md.sdf(x, y, z, { arms: false }) >= 0) z += 2;
+      let lo = z - 2, hi = z; for (let k = 0; k < 22; k++) { const mid = (lo + hi) / 2; if (md.sdf(x, y, mid, { arms: false }) < 0) hi = mid; else lo = mid; }
+      return hi;
+    };
+    const tightestBend = (pts) => {   // smallest radius along a polyline of [u, z]
+      let r = Infinity;
+      for (let i = 1; i < pts.length - 1; i++) {
+        const [a, b, c] = [pts[i - 1], pts[i], pts[i + 1]];
+        const t1 = Math.atan2(b[1] - a[1], b[0] - a[0]), t2 = Math.atan2(c[1] - b[1], c[0] - b[0]);
+        const ds = (Math.hypot(b[0] - a[0], b[1] - a[1]) + Math.hypot(c[0] - b[0], c[1] - b[1])) / 2;
+        r = Math.min(r, ds / Math.abs(t2 - t1));
+      }
+      return r;
+    };
+
+    it(`${bt}: lower back and seat have no pinch or crease — up and down, and across the cleft`, () => {
+      for (const x of [0, 20, 45, 70, 100]) {
+        const pts = []; for (let y = d.waistH + 30; y > d.crotchH + 30; y -= 3) pts.push([-y, skinBack(x, y)]);
+        expect(tightestBend(pts)).toBeGreaterThan(12);
+      }
+      for (const y of [d.hipH + 30, d.hipH, (d.hipH + d.seatH) / 2, d.seatH, d.crotchH + 40]) {
+        const pts = []; for (let x = -60; x <= 60; x += 2) pts.push([x, skinBack(x, y)]);
+        expect(tightestBend(pts)).toBeGreaterThan(8);
+      }
+    });
+
+    it(`${bt}: surface normals over the seat turn smoothly (no kink for the cloth to catch on)`, () => {
+      let worst = 0;
+      for (let y = d.waistH + 30; y > d.crotchH + 20; y -= 6) for (let x = 0; x <= 120; x += 12) {
+        const n1 = md.normal(x, y, skinBack(x, y)), n2 = md.normal(x, y - 3, skinBack(x, y - 3));
+        worst = Math.max(worst, Math.acos(Math.min(1, n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2])) * 180 / Math.PI);
+      }
+      expect(worst).toBeLessThan(15);
+    });
+
     it(`${bt}: hip width and depth are in human proportion (not a wide, flat slab)`, () => {
       let w = 0; for (let x = 300; x > 0; x -= 0.5) { let hit = false; for (let z = -250; z < 250; z += 2) if (md.sdf(x, d.hipH, z, { arms: false }) < 0) { hit = true; break; } if (hit) { w = 2 * x; break; } }
       let front = -Infinity; for (let x = -w / 2; x <= w / 2; x += 5) for (let z = 300; z > -300; z -= 1) if (md.sdf(x, d.hipH, z, { arms: false }) < 0) { front = Math.max(front, z); break; }

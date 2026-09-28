@@ -4,6 +4,7 @@ import { DEFAULT_MEASUREMENTS } from '../../hooks/useMeasurements.js';
 import { createAvatarModel, bodyForDrape } from '../avatar/avatar.js';
 import { extractPieces } from './pieces.js';
 import { drapePattern, solvePatternPoint, closeDarts, dartIntervalsAt } from './drape.js';
+import { seatFoldShare } from './testBodies.js';
 
 const M = DEFAULT_MEASUREMENTS;
 const model = createAvatarModel(M);
@@ -246,6 +247,25 @@ describe('trouser drape', () => {
     const each = (performance.now() - t0) / 5;
     expect(each).toBeLessThan(80);
   });
+});
+
+describe('the draped seat lies smooth (no bunching on the buttocks)', () => {
+  // a crease in the body makes the drape fold over itself where it follows it
+  // (the old seat: 3.7–4.7% of the seat folded; smooth body: ~1%; seam band
+  // laid beside the seam instead of on it: 0.3–0.8%)
+  const bodies = {
+    'size 40': [M, 'male_adult', 'trouser'],
+    'large 44, slacks': [{ ...M, waist: 1120, hip: 1180, seat: 1200, upperThighGirth: 700, kneeGirth: 440, height: 1840, bodyRise: 310 }, 'male_adult', 'slack'],
+    'woman': [{ ...M, waist: 700, hip: 1000, seat: 1010, chest: 900, upperThighGirth: 600, height: 1650, bodyRise: 270, shoulderWidth: 400 }, 'female_adult', 'trouser'],
+  };
+  for (const [name, [m, bt, fit]] of Object.entries(bodies)) {
+    it(name, () => {
+      const md = createAvatarModel(m, bt);
+      const { seat, share } = seatFoldShare(drapePattern(generateTrouserBlock(m, fit), bodyForDrape(md)), md);
+      expect(seat).toBeGreaterThan(500);
+      expect(share).toBeLessThan(0.012);
+    });
+  }
 });
 
 describe('3D → 2D inverse (two-way sync)', () => {

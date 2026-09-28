@@ -320,10 +320,39 @@ Benson: the buttocks and seat looked too flat, with no real rear volume. The sea
 - E2E: all specs, 3 viewports — run 3×.
 
 ### Known limitations
-- A faint crease stays at the gluteal fold.
+- A faint crease stays at the gluteal fold. (Fixed in 3h.)
 - A fuller seat is where a fixed block strains: the cloth crotch band tolerance is 2.2 (same as the drape tests). The buttocks-prominence toggle (manifest) is the proper next step.
 - The drape timing test now measures warm runs (< 80ms).
 - The e2e "3D view keeps its angle" test was flaky before this change (2 of 8 on the old code): it waited out the orbit momentum by wall time. A test hook now finishes the momentum at once; 15/15 since.
+
+## Stage 3h — Seat Smoothing (no pinch, no crease)
+Status: COMPLETE
+Date: 28 Sep 2026
+
+### Why
+The seat volume from 3g creased the lower back and seat, and trousers bunched up on it. Measured on the old body: the cleft was a knife edge across the centre line (1–4 mm radius, up to 43 mm deep); the woman's back stepped out 50° just above the seat (6 mm radius), because the hip, seat and fold keys sit only 25 mm apart; surface normals jumped 25–34° over 3 mm low on the seat.
+
+### What changed (`src/lib/avatar/body.js`)
+- Gluteal lobes are two mirrored bells, so the cleft is a smooth, rounded valley (flat on the centre line). The old single bell in |x| left a V there. The lobe width is set by the seat half-width, so the lobes run straight down into the fold instead of pinching toward the centre.
+- Below the waist the back depth, gluteal amount and spine offset are blurred up and down the body (Gaussian, σ 16 mm, fading out 60 mm above the waist). That spreads the volume however close the keys are, and blurring keeps a monotone curve monotone. The caps' fixed spine offset (−10) against the woman's seat (−20) was part of the step.
+- The slope correction (a factor on the distance) is blurred and read with a cubic. Linear reads every 4 mm tilted the normals wherever the torso field blends into a leg.
+- The legs' mirror seam (|x|) is rounded within 10 mm of the centre (|x|·(2u − u²): same value on the line, never outside |x|, so the crotch saddle and height are unchanged). The wide fold blend was carrying that corner into the back of the crotch.
+- SACRUM_BACK 0.2 → 0.3.
+- Drape (`src/lib/drape/drape.js`): near the crotch seam, fabric d from the seam on paper is now laid d to the side of it on the body, then settled by the collision. It was pulled onto x = 0, which stacked the rows next to the back seam into a few mm, and the drape folded over itself there.
+
+### Results
+- Tightest bend on the lower back and seat: 12–33 mm up and down (was 5–21), 10–80 mm across the cleft (was 1–15); cleft 3–13 mm deep.
+- Largest normal jump over 3 mm: 7–11° (was 24–34°).
+- Live drape (what the 3D view shows): seat fabric folded over 3.7–4.7% → 0.9–1.4% from the body smoothing → 0.3–0.8% with the seam band laid beside the seam (size 40, large, woman). This was the visible bunching.
+- Cloth simulation: settling already smoothed the seat on the old body (0–1% folded after, on both bodies). It never caused the bunching.
+
+### Tests
+- Unit: 293. New: no crease on the seat (bend radius, both bodies) and smooth normals over the seat (4 tests); the draped seat folds < 1.2% (drape, 3 bodies); settling folds < 2% (cloth, 3 bodies; the woman is now a cloth test body). The fold share is measured against the body (`seatFoldShare` in `src/lib/drape/testBodies.js`). The 4 body tests and 3 drape tests fail on the old body; the cloth tests are a regression guard.
+
+### Known limitations
+- Bending across seams in `pbd.js` was tried and changed nothing, so it was not kept.
+- 0.3–0.8% of the draped seat still folds, right at the fork, where the back seam turns under between the legs (7–17 triangles per body; the simulation settles them). A wider hand-over below the rise and a narrower seam band were both tried and were worse.
+- The fold at the crotch itself (between the thighs, below the seat) is still tight. That's anatomical, and the trousers bridge it.
 
 ## Stage 4 — Shirt Block Engine
 Status: NOT STARTED

@@ -10,6 +10,7 @@ import { generateTrouserBlock } from '../blocks/trouserBlock.js';
 import { DEFAULT_MEASUREMENTS as M } from '../../hooks/useMeasurements.js';
 import { createAvatarModel, bodyForDrape } from '../avatar/avatar.js';
 import { drapePattern } from '../drape/drape.js';
+import { seatFoldShare } from '../drape/testBodies.js';
 
 // ── simple shapes ───────────────────────────────────────────────────────────
 
@@ -172,6 +173,8 @@ describe('cloth solver — physics pieces', () => {
 const BODIES = {
   'size 40': [M, 'male_adult', 'trouser'],
   'large 44, slacks': [{ ...M, waist: 1120, hip: 1180, seat: 1200, upperThighGirth: 700, kneeGirth: 440, height: 1840, bodyRise: 310 }, 'male_adult', 'slack'],
+  // the fullest seat: hip and seat lines only 25 mm apart
+  'woman': [{ ...M, waist: 700, hip: 1000, seat: 1010, chest: 900, upperThighGirth: 600, height: 1650, bodyRise: 270, shoulderWidth: 400 }, 'female_adult', 'trouser'],
 };
 
 for (const [name, [m, bodyType, fit]] of Object.entries(BODIES)) {
@@ -232,6 +235,13 @@ for (const [name, [m, bodyType, fit]] of Object.entries(BODIES)) {
       }
       expect(worst).toBeLessThan(1.6);
       expect(worstCrotch).toBeLessThan(2.2);
+    });
+
+    it('the seat fabric lies smooth: settling does not fold it over on itself', () => {
+      const pieces = inst.map((_, k) => ({ positions: sim.instancePositions(k), indices: inst[k].indices }));
+      const { seat, share } = seatFoldShare(pieces, model);
+      expect(seat).toBeGreaterThan(300);
+      expect(share).toBeLessThan(0.02);
     });
 
     it('hangs from the waist: the waistband stays at its height, the hems drop onto the feet line', () => {

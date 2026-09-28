@@ -275,7 +275,7 @@ Benson asked for Position-Based Dynamics integrated with the avatar's distance f
 
 ### Known limitations
 - Self-collision is particle–particle at 15mm spacing: thin folds can still pass between particles.
-- A few particles near the waist on large bodies keep a sub-millimetre flicker; settle detection allows 0.8 mm/frame.
+- A few particles near the waist on large bodies keep a sub-millimetre flicker; settle detection allows 1.0 mm/frame (was 0.8; the large body flickers 0.7–0.8 over the belly and sat on the line).
 - One fabric (defaults tuned for cotton drill); the fabric selector / KES values (Stage 11) will set stiffness, friction and damping.
 - The simulated result has no drag handles; edit on the live drape, then simulate again.
 
@@ -353,6 +353,21 @@ The seat volume from 3g creased the lower back and seat, and trousers bunched up
 - Bending across seams in `pbd.js` was tried and changed nothing, so it was not kept.
 - 0.3–0.8% of the draped seat still folds, right at the fork, where the back seam turns under between the legs (7–17 triangles per body; the simulation settles them). A wider hand-over below the rise and a narrower seam band were both tried and were worse.
 - The fold at the crotch itself (between the thighs, below the seat) is still tight. That's anatomical, and the trousers bridge it.
+
+## Stage 3i — Block Curve Clean-up (within the lock)
+Status: COMPLETE
+Date: 28 Sep 2026
+
+### What changed (`src/lib/blocks/trouserBlock.js`)
+Only the curves between landmarks changed. No landmark moved, and the locked standard tests and the geometry snapshot are unchanged.
+- Outseam, crotch line → flip → knee: the tangent at the flip point was the crotch–knee chord itself, and the flip point lies on that chord, so each half had to wiggle to reach it (two stray inflections). The tangent is now the mean of the end tangents mirrored in the chord, so the curve turns once, at the flip.
+- Inseam, fork → knee: now arrives along the straight knee → hem line (a 5–11° kink at the knee before). Still hollowed exactly 1 cm, measured square off the chord's midpoint.
+- Cloth settle threshold 0.8 → 1.0 mm/frame (`runner.js` and the test): the large body's belly flicker (0.7–0.8) sat on the line.
+
+### Open (needs the pattern maker's approval: changes locked rules)
+- Hip curve, waist → hip, is an S on every size. A single convex curve would meet the waist at 100–110°, so the side waist would have to be raised to keep it square when sewn (a landmark moves).
+- Dart sizes are fixed (front 2 cm; back 2 and 1.6 cm) whatever the hip–waist drop: on the large 44 the back side waist ends 15 mm outside the hip line, and on the woman the front side seam comes in 65 mm. Standard fix: share the suppression between darts and side seams in proportion.
+- Back darts are vertical on the pitched back waist (84–86° to it); Aldrich squares them to the waistline.
 
 ## Stage 4 — Shirt Block Engine
 Status: NOT STARTED

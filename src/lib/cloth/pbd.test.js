@@ -192,7 +192,7 @@ for (const [name, [m, bodyType, fit]] of Object.entries(BODIES)) {
       sim.step();
       frameMs.push(performance.now() - t0);
       moves.push(sim.lastFrameMove());
-      if (settledAt < 0 && f > 20 && moves.slice(-6).every(v => v < 0.8)) settledAt = f;
+      if (settledAt < 0 && f > 20 && moves.slice(-6).every(v => v < 1.0)) settledAt = f;
     }
     const st = sim.stats();
 

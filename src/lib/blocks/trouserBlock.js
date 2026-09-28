@@ -102,9 +102,16 @@ export function generateTrouserBlock(m, garmentType = 'trouser') {
   function frenchOutseam(H, R, K, A, piece) {
     const tt = (flipY - R.y) / ((K.y - R.y) || 1);
     const F = add(pt(R.x + (K.x - R.x) * tt, flipY));   // flip point, on the crotch–knee chord
-    const tF  = unit(K.x - R.x, K.y - R.y);              // shared tangent at the flip (G1)
     const tR  = unit(R.x - H.x, R.y - H.y);              // leave crotch line continuing the hip line → outer curve
     const tK  = unit(A.x - K.x, A.y - K.y);              // arrive at knee along the straight lower leg → inner curve
+    // Shared tangent at the flip (G1). F lies on the crotch–knee chord, so for
+    // each half to be ONE arc (the curve flipping once, at F) the tangent there
+    // must cross the chord to the other side from tR and tK: the mean of tR and
+    // tK mirrored in the chord. (Along the chord itself, each half had to wiggle
+    // to reach it — two extra inflections.)
+    const ch = unit(K.x - R.x, K.y - R.y);
+    const mR = unit(tR.x + tK.x, tR.y + tK.y), md = mR.x * ch.x + mR.y * ch.y;
+    const tF  = unit(2 * md * ch.x - mR.x, 2 * md * ch.y - mR.y);
     const l1 = Math.hypot(F.x - R.x, F.y - R.y) / 3;
     const l2 = Math.hypot(K.x - F.x, K.y - F.y) / 3;
     seg(tag(bez(R, F, { x: R.x + tR.x * l1, y: R.y + tR.y * l1 }, { x: F.x - tF.x * l1, y: F.y - tF.y * l1 }), piece));
@@ -112,17 +119,32 @@ export function generateTrouserBlock(m, garmentType = 'trouser') {
     return F;
   }
 
-  /** Inseam crotch fork → knee, hollowed 1 cm toward the crease (French curve). */
+  /**
+   * Inseam crotch fork → knee, hollowed 1 cm toward the crease (French curve),
+   * arriving at the knee along the straight knee → hem line (no kink at the knee).
+   */
   const INSEAM_HOLLOW = 10;
-  function frenchInseam(FK, K, creaseX, piece) {
-    const cx = K.x - FK.x, cy = K.y - FK.y;
+  function frenchInseam(FK, K, A, creaseX, piece) {
+    const cx = K.x - FK.x, cy = K.y - FK.y, len = Math.hypot(cx, cy);
     let n = unit(-cy, cx);
     const mid = { x: (FK.x + K.x) / 2, y: (FK.y + K.y) / 2 };
     if ((creaseX - mid.x) * n.x < 0) n = { x: -n.x, y: -n.y };
-    const d = INSEAM_HOLLOW / 0.75;
-    seg(tag(bez(FK, K,
-      { x: FK.x + cx / 3 + n.x * d, y: FK.y + cy / 3 + n.y * d },
-      { x: FK.x + 2 * cx / 3 + n.x * d, y: FK.y + 2 * cy / 3 + n.y * d }), piece));
+    // A cubic's midpoint sits 3/8 of its two control offsets off the chord, so
+    // the offsets share 8/3 of the hollow. Knee end: on the knee → hem line, up
+    // to a third of the chord back up it, but taking no more than half the
+    // hollow — the rest goes to the fork end, so both bow the same way (one
+    // arc, no inflection).
+    const share = INSEAM_HOLLOW * 8 / 3;
+    const tK = unit(K.x - A.x, K.y - A.y);
+    const off = tK.x * n.x + tK.y * n.y;                       // hollow per mm up the knee line
+    const l2 = off > 1e-6 ? Math.min(len / 3, (share / 2) / off) : len / 3;
+    const c2 = { x: K.x + tK.x * l2, y: K.y + tK.y * l2 };
+    const o1 = share - Math.max(0, off * l2);
+    // …and along the chord the two controls sum to its length, so the curve's
+    // midpoint sits square off the chord's midpoint (the hollow is measured there)
+    const ch = { x: cx / len, y: cy / len };
+    const a1 = len - ((c2.x - FK.x) * ch.x + (c2.y - FK.y) * ch.y);
+    seg(tag(bez(FK, K, { x: FK.x + ch.x * a1 + n.x * o1, y: FK.y + ch.y * a1 + n.y * o1 }, c2), piece));
   }
 
   // ════════════════════════════════════════════════════════════════════════════
@@ -160,7 +182,7 @@ export function generateTrouserBlock(m, garmentType = 'trouser') {
   seg(tag(line(fOK, fOA), F));                                  // knee → hem: straight
   seg(tag(line(fOA, fIA), F));                                  // hem
   seg(tag(line(fIA, fIK), F));                                  // inseam hem → knee: straight
-  frenchInseam(fFK, fIK, cFx, F);                               // inseam fork → knee: French curve
+  frenchInseam(fFK, fIK, fIA, cFx, F);                          // inseam fork → knee: French curve
   // fly: CF straight from waist to hip line, then bezier crotch curve to the fork
   seg(tag(line(fCW, fCH), F));
   const flyDepth = yr - yh2;
@@ -214,7 +236,7 @@ export function generateTrouserBlock(m, garmentType = 'trouser') {
   seg(tag(line(bOK, bOA), B));                                  // knee → hem: straight
   seg(tag(line(bOA, bIA), B));                                  // hem
   seg(tag(line(bIA, bIK), B));                                  // inseam hem → knee: straight
-  frenchInseam(bFK, bIK, cBx, B);                               // inseam fork → knee: French curve
+  frenchInseam(bFK, bIK, bIA, cBx, B);                          // inseam fork → knee: French curve
   // CB: straight along the seat angle from waist to hip line, then the deep seat curve to the fork
   seg(tag(line(bCW, bCH), B));
   const seatDir = unit(cbHX - cbWX, yh2 - cbWY);                // continue the seat-angle line

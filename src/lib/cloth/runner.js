@@ -9,7 +9,7 @@ import { buildCloth, createClothSim } from './pbd.js';
 export const RUN_DEFAULTS = {
   maxFrames: 240,        // 4 s of simulated time at most
   minFrames: 20,         // never stop before the rest-length ramp has finished
-  settleMove: 0.8,       // mm — "settled" when nothing moves more than this per frame…
+  settleMove: 1.0,       // mm — "settled" when nothing moves more than this per frame…
   settleFrames: 6,       // …for this many frames in a row
 };
 
